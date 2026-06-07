@@ -220,7 +220,7 @@ func RunTUI(args []string) int {
 	renderFooter(footer, &state)
 	logger.log("[darkgray]", "INFO", "emily tui ready — F1=RSI cycle  F2=Tyler  F3=start system  r=refresh  q=quit")
 
-	// Background refresh ticker (every 15s)
+	// 15s data ticker — runs collectState (git, IDUNA, processes)
 	ticker := time.NewTicker(15 * time.Second)
 	go func() {
 		for range ticker.C {
@@ -228,6 +228,15 @@ func RunTUI(args []string) int {
 		}
 	}()
 	defer ticker.Stop()
+
+	// 1s clock ticker — redraws only the header with time.Now()
+	clockTicker := time.NewTicker(time.Second)
+	go func() {
+		for range clockTicker.C {
+			app.QueueUpdateDraw(func() { renderHeader(header, &state) })
+		}
+	}()
+	defer clockTicker.Stop()
 
 	// ── Keyboard ──────────────────────────────────────────────────────────────
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -550,7 +559,7 @@ func renderHeader(tv *tview.TextView, s *tuiState) {
 	}
 	tv.SetText(
 		fmt.Sprintf("[white::b] EINHORN INDUSTRIAL [-] [yellow::b]◈[-] [white::b]EMILY OS[-]%s[darkgray]%s[-]\n",
-			strings.Repeat(" ", 20), s.refreshedAt.Format("2006-01-02 15:04:05")) +
+			strings.Repeat(" ", 20), time.Now().Format("2006-01-02 15:04:05")) +
 			fmt.Sprintf("  IDUNA:%s  OBS:%s  EMILY-AGENT:%s  [darkgray]Apples:%d  Repos:%d[-]",
 				idunaColor, obsColor, agentColor, appleCount, len(s.repos)),
 	)
