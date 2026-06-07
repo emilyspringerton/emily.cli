@@ -1,7 +1,7 @@
 # Emily CLI — Command Reference
 ## Full Specification for `emily` Binary
 
-*Last updated: 2026-06-07 — v0.3.0*
+*Last updated: 2026-06-07 — v0.5.0*
 
 ---
 
@@ -225,8 +225,11 @@ Cross-repo system status: git state + last Apple per agent.
 ```
 emily status [flags]
 
-  --no-git      Skip git checks (faster if in a slow shell or remote context)
-  --no-iduna    Skip IDUNA Apple query
+  --no-git           Skip git checks (faster if in a slow shell or remote context)
+  --no-iduna         Skip IDUNA Apple query
+  --watch            Live-updating dashboard — clears terminal, reprints every --interval seconds
+  --interval int     Refresh interval for --watch (default 30)
+  --json             Output JSON (one-shot only; not compatible with --watch)
 ```
 
 ### Output
@@ -292,16 +295,19 @@ emily sync --watch --interval 5 # 5s poll for lower latency
 
 ## emily install
 
-Print (and optionally install) recommended crontab entries.
+Print (and optionally install) recommended crontab entries and systemd user units.
 
 ```
-emily install --cron [--write]
+emily install [--cron|--systemd] [--write]
 
-  --cron    Print recommended crontab entries
-  --write   Install them idempotently (appends to crontab, skips duplicates)
+  --cron      Print recommended crontab entries
+  --systemd   Generate a systemd user unit for `emily sync --watch --quiet`
+  --write     Install (crontab entries or systemd unit file)
 ```
 
-### Entries installed
+### --cron
+
+Prints two entries:
 
 ```cron
 */10 * * * * /home/fatbaby/.local/bin/emily sync --quiet 2>/dev/null
@@ -311,11 +317,28 @@ emily install --cron [--write]
 The first syncs new FatBaby observations to IDUNA every 10 minutes.
 The second runs Tyler's RSI loop every 4 hours.
 
+`--write` installs idempotently — skips entries already in the crontab.
+
+### --systemd
+
+Generates a systemd user unit (`~/.config/systemd/user/emily-sync.service`) that runs
+`emily sync --watch --quiet` as a persistent daemon. Restarts on failure with 30s delay.
+
+`--write` creates the file. After writing:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now emily-sync.service
+systemctl --user status emily-sync.service
+```
+
 ### Examples
 
 ```bash
-emily install --cron             # print entries
-emily install --cron --write     # install into crontab
+emily install --cron                    # print crontab entries
+emily install --cron --write            # install into crontab (idempotent)
+emily install --systemd                 # print unit file + next steps
+emily install --systemd --write         # write to ~/.config/systemd/user/
 ```
 
 ---

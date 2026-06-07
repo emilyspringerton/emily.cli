@@ -44,12 +44,12 @@
 
 ## SECTION 2: POLISH
 
-- [ ] **scripts/build.sh --color** — run the color-mode tests as a separate step:
-  `EMILY_COLOR=1 go test ./internal/color/... -run _enabled_`.
-  Currently build.sh only runs default-mode tests.
+- [x] **scripts/build.sh --color** — `EMILY_COLOR=1 go test ./internal/color/... -run "_enabled_"`
+  already present in build.sh step 2b. Confirmed. Apple #49. 2026-06-07.
 
-- [ ] **COMMANDS.md: agents + prime-task sections** — document the two newest commands
-  with full flag tables, behavior notes, and examples.
+- [x] **COMMANDS.md: agents + prime-task sections** — both sections present and complete.
+  Updated COMMANDS.md to v0.5.0: status --watch flags, install --systemd section.
+  Apple #49. 2026-06-07.
 
 ---
 
