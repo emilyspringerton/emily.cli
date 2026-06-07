@@ -30,9 +30,9 @@
 - [x] **stdin input for observe** — read summary from stdin when no positional arg given
   and stdin is a pipe. `echo "msg" | emily observe -s info` now works. Apple #39. 2026-06-07.
 
-- [ ] **emily apples get <id>** — show full body of a single Apple by ID.
-  Currently: `emily apples list --full` shows first 5 lines of body. `get` shows the whole thing.
-  Acceptance: `emily apples get 37` prints full Apple #37 including complete body.
+- [x] **emily apples get <id>** — show full body of a single Apple by ID.
+  `emily apples get 39` shows full body, type, repo, run, recorded_at. --json also works.
+  Apple #39 receipt. 2026-06-07.
 
 - [ ] **command-specific help** — `emily help observe`, `emily observe --help` should print
   the observe-specific flag list and examples, not the global usage.

@@ -159,6 +159,35 @@ func (c *Client) ListApples(f AppleListFilters) ([]Apple, error) {
 	return apples, nil
 }
 
+// GetApple fetches a single Apple by ID from GET /api/v1/apples/:id.
+func (c *Client) GetApple(id int64) (*Apple, error) {
+	if err := c.Auth(); err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/api/v1/apples/%d", c.BaseURL, id)
+	req, _ := http.NewRequest("GET", endpoint, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("get apple %d: %w", id, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("apple #%d not found", id)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get apple %d: %d: %s", id, resp.StatusCode, trimMsg(raw))
+	}
+
+	var a Apple
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return nil, fmt.Errorf("get apple decode: %w", err)
+	}
+	return &a, nil
+}
+
 // PostApple creates a new Apple and returns its ID.
 func (c *Client) PostApple(payload ApplePayload) (int64, error) {
 	if err := c.Auth(); err != nil {

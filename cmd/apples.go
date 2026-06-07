@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,8 +29,10 @@ func RunApples(args []string) int {
 		return runApplesList(rest)
 	case "post":
 		return runApplesPost(rest)
+	case "get":
+		return runApplesGet(rest)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown subcommand %q — use list or post\n", sub)
+		fmt.Fprintf(os.Stderr, "unknown subcommand %q — use list, post, or get\n", sub)
 		return 1
 	}
 }
@@ -159,6 +162,69 @@ func runApplesPost(args []string) int {
 		fmt.Printf("  type:  %s\n", *appleType)
 		fmt.Printf("  title: %s\n", title)
 	}
+	return 0
+}
+
+func runApplesGet(args []string) int {
+	fs := flag.NewFlagSet("apples get", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "output JSON")
+
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() == 0 {
+		fmt.Fprintln(os.Stderr, "usage: emily apples get <id>")
+		return 1
+	}
+	id, err := strconv.ParseInt(fs.Arg(0), 10, 64)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %q is not a valid Apple ID\n", fs.Arg(0))
+		return 1
+	}
+
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+	if cfg.IDUNAAgentSecret == "" {
+		fmt.Fprintln(os.Stderr, "error: IDUNA_AGENT_SECRET not set")
+		return 2
+	}
+
+	client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
+	apple, err := client.GetApple(id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 4
+	}
+
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(apple)
+		return 0
+	}
+
+	ts := apple.RecordedAt
+	if len(ts) >= 19 {
+		ts = ts[:19]
+	}
+	ts = strings.Replace(ts, "T", " ", 1)
+
+	fmt.Printf("\n◈ Apple #%d\n", apple.ID)
+	fmt.Printf("  type:       %s\n", apple.AppleType)
+	fmt.Printf("  repo:       %s\n", apple.SourceRepo)
+	fmt.Printf("  run:        %s\n", apple.RunID)
+	fmt.Printf("  recorded:   %s\n", ts)
+	fmt.Printf("  title:      %s\n", apple.Title)
+	if apple.Body != "" {
+		fmt.Println("\n  body:")
+		for _, line := range strings.Split(apple.Body, "\n") {
+			fmt.Printf("    %s\n", line)
+		}
+	}
+	fmt.Println()
 	return 0
 }
 
