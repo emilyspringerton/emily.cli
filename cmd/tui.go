@@ -24,8 +24,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -131,8 +133,52 @@ type tokenEstimate struct {
 	RunsToday int
 }
 
+// evictStaleTUI kills any other running `emily tui` process and resets the
+// terminal to sane state. tview leaves the terminal in raw/alt-screen mode
+// when killed with Ctrl-C, so the next launch gets a broken terminal unless
+// we clean up first.
+func evictStaleTUI() {
+	self := os.Getpid()
+	out, err := exec.Command("pgrep", "-f", "emily tui").Output()
+	if err != nil {
+		return // no matches
+	}
+	evicted := 0
+	for _, field := range strings.Fields(string(out)) {
+		pid, err := strconv.Atoi(field)
+		if err != nil || pid == self {
+			continue
+		}
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			continue
+		}
+		proc.Signal(syscall.SIGTERM)
+		evicted++
+	}
+	if evicted > 0 {
+		time.Sleep(150 * time.Millisecond)
+		// SIGKILL anything that didn't respond to SIGTERM
+		for _, field := range strings.Fields(string(out)) {
+			pid, err := strconv.Atoi(field)
+			if err != nil || pid == self {
+				continue
+			}
+			proc, _ := os.FindProcess(pid)
+			if proc != nil {
+				proc.Signal(syscall.SIGKILL)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "evicted %d stale emily tui process(es)\n", evicted)
+	}
+	// Restore terminal regardless — a previous tview session may have left it
+	// in raw or alt-screen mode even if the process is already dead.
+	exec.Command("stty", "sane").Run()
+}
+
 // RunTUI launches the Bloomberg-style terminal dashboard.
 func RunTUI(args []string) int {
+	evictStaleTUI()
 	cfg, _ := config.Resolve()
 
 	app := tview.NewApplication()
