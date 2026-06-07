@@ -66,6 +66,8 @@ func main() {
 		code = cmd.RunInstall(rest)
 	case "prime-task":
 		code = cmd.RunPrimeTask(rest)
+	case "agents":
+		code = cmd.RunAgents(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
@@ -195,6 +197,27 @@ Examples:
   emily sync --watch              # daemon: auto-post as obs files appear
   emily sync --watch --interval 5 # daemon with 5s poll
 `)
+	case "agents":
+		fmt.Print(`emily agents — agent activity dashboard from IDUNA Apples log
+
+Usage:
+  emily agents [flags]
+
+Flags:
+  -n int         Apples to scan for activity history (default 200)
+  --since int    Only show agents active in the last N minutes
+  --json         Output JSON array
+
+Output: REPO | LAST SEEN | TOTAL | LAST TYPE | LAST TITLE (newest-active first)
+
+Note: synthesized from Apples log — reflects last Apple posted, not a heartbeat.
+Agents that have not posted an Apple won't appear, even if registered.
+
+Examples:
+  emily agents              # all agents, last 200 apples
+  emily agents --since 60   # agents active in the last hour
+  emily agents --json       # JSON for scripts/piping
+`)
 	case "prime-task":
 		fmt.Print(`emily prime-task — write a directed task to EMILY/signals/tasks/
 
@@ -264,6 +287,10 @@ Usage:
   emily prime-task [flags] <description>
         Write a directed task to EMILY/signals/tasks/ for the obs-watcher.
         Flags: --type, --priority, --context, --criteria (repeatable), --dry-run
+
+  emily agents [--since N]
+        Agent activity dashboard — last-seen, apple count, and last apple per repo.
+        Synthesized from the Apples log. --since N = only agents active in last N minutes.
 
 Environment:
   IDUNA_BASE_URL      IDUNA server (default: http://localhost:8080)

@@ -320,6 +320,100 @@ emily install --cron --write     # install into crontab
 
 ---
 
+## emily agents
+
+Agent activity dashboard — synthesized from the IDUNA Apples log.
+
+```
+emily agents [flags]
+
+  -n int        Apples to scan (default 200; higher = more complete history)
+  --since int   Only show agents active in the last N minutes
+  --json        Output JSON array
+```
+
+### Behavior
+
+Fetches the last `-n` Apples, groups by `source_repo`, and shows each agent's:
+- **LAST SEEN** — how long ago the last Apple was posted (just now / Nm ago / Nh ago)
+- **TOTAL** — Apple count within the scanned window
+- **LAST TYPE** — `apple_type` of the most recent Apple
+- **LAST TITLE** — title of the most recent Apple
+
+Sorted newest-active first. Note: reflects Apple activity, not a heartbeat registration.
+Agents that have never posted an Apple won't appear.
+
+### Examples
+
+```bash
+emily agents              # all agents, scan last 200 apples
+emily agents --since 60   # only agents active in the last hour
+emily agents --json       # JSON array for scripts
+```
+
+### Output
+
+```
+◈ EMILY OS — AGENTS | 2026-06-07 09:16
+
+  REPO                LAST SEEN     TOTAL  LAST TYPE             LAST TITLE
+  ──────────────────────────────────────────────────────────────────────────────
+  CLI                 1m ago            8  signal_observation    [INFO] emily.cli v0.5.0 RSI loop closed
+  EMILY               6h ago            6  session_state         Emily Prime session complete
+  PRRJECT_FATBABY     6h ago           26  signal_observation    FatBaby obs [error]: eps-processor…
+  TYLER               6h ago            3  backlog_completion    TYLER/engine/tyler_hum_mechanic.md
+```
+
+---
+
+## emily prime-task
+
+Write a directed task to `EMILY/signals/tasks/` for the observation-watcher's prime task poller.
+
+```
+emily prime-task [flags] <description>
+
+  --type string       task_type field (default: operator_directive)
+  --priority string   low|normal|high|critical (default: normal)
+  --context string    strategic context for Claude (optional)
+  --criteria string   acceptance criterion (repeatable)
+  --deadline string   optional deadline (free text)
+  --dry-run           print task JSON without writing it
+  --no-apple          skip IDUNA Apple receipt
+  --json              output JSON confirmation
+```
+
+### Behavior
+
+Writes a JSON task file to `EMILY/signals/tasks/<timestamp>-<id>.json`. The observation-watcher
+(in PRRJECT_FATBABY) polls this directory every 10 seconds and invokes Claude Code on the
+FatBaby repo when it finds a new task file.
+
+This closes the **operator → CLI → EMILY/signals/tasks → obs-watcher → Claude on FatBaby**
+directed loop without requiring Emily Prime LLM invocation.
+
+Auto-posts a `prime_task` Apple to IDUNA as a receipt.
+
+### Examples
+
+```bash
+# Quick directive
+emily prime-task "add test for eps-processor edge case in Q1 earnings"
+
+# With acceptance criteria and priority
+emily prime-task --priority high --type improve_signal \
+  --criteria "go test ./... passes" --criteria "committed to git" \
+  "entity-graph parser misses director names with Jr. suffix"
+
+# Dry run to preview the task JSON
+emily prime-task --dry-run "preview without writing"
+
+# Multiple positional words are joined into the description
+emily prime-task improve the entity graph parser for suffix variants
+```
+
+---
+
 ## Environment Variables
 
 | Variable | Default | Purpose |

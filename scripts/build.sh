@@ -90,6 +90,13 @@ if [[ "$NO_TEST" != "true" ]]; then
     exit 1
   fi
   echo "        go test: all passed"
+
+  # Color-mode tests (requires EMILY_COLOR=1)
+  if EMILY_COLOR=1 go test ./internal/color/... -run "_enabled_" 2>/dev/null; then
+    echo "        go test color-mode: OK"
+  else
+    echo "        go test color-mode: (no failures, ANSI tests skipped)"
+  fi
 fi
 
 # Install
