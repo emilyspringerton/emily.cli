@@ -453,6 +453,36 @@ If `IDUNA_AGENT_SECRET` is missing, Emily CLI auto-reads `IDUNA_SECRETS` (as a G
 
 ---
 
+## `emily tui` — Bloomberg Terminal Dashboard
+
+```
+emily tui
+```
+
+Bloomberg-style live terminal dashboard for the Einhorn Industrial agent stack.
+
+**Layout (three-column grid):**
+- **Left**: Repos (branch, dirty count, commit hash) + pending prime-tasks + token budget
+- **Center**: Live Apple feed — auto-refreshes every 15s, shows newest first
+- **Right**: Process health (obs-watcher, emily-agent, iduna.service) + RSI loop state + action hotkeys
+
+**Hotkeys:**
+
+| Key | Action |
+|-----|--------|
+| F1  | Fire `emily prime-task --preset rsi-token-report` |
+| F2  | Start Tyler RSI loop (2 iterations, background) |
+| F3  | Run `emily start` (bring up obs-watcher + emily-agent) |
+| F4  | Tail `EMILY/var/logs/rsi-loop.log` (suspends TUI) |
+| r   | Force refresh all panels |
+| h   | Show hotkey help in status bar |
+| q   | Quit |
+
+**RSI loop state panel** reads `EMILY/var/rsi-loop-state.json` written by `rsi-loop.sh` to
+show live iteration count, phase (tic/tock/entropy/analyze/complete), and active task ID.
+
+---
+
 ## Exit Codes
 
 | Code | Meaning |

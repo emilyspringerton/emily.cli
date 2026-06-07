@@ -66,6 +66,18 @@
   Fetches max(n,200) then filters by recorded_at > now-N*min. 6 new tests in apples_test.go.
   Total: 75 tests. Apple #64. 2026-06-07.
 
+- [x] **emily tui — Bloomberg terminal** — `emily tui` command. Three-column live dashboard:
+  repos+tasks+token budget | Apple feed | process health+RSI loop+hotkeys. tview-based.
+  F1=RSI task, F2=Tyler, F3=start, F4=tail logs, r=refresh, q=quit. v0.6.0. 2026-06-07.
+
+---
+
+## SECTION 4: NEXT
+
+- [ ] **emily tui: token spend from IDUNA Apple bodies** — real token accounting.
+- [ ] **emily tui: inline command input bar** — tview.InputField for prime-task dispatch.
+- [ ] **emily tui: F5 = fire RSI loop** — spawn rsi-loop.sh in background, show live status.
+
 ---
 
 ## BACKLOG PROTOCOL

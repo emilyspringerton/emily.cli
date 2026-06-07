@@ -21,7 +21,7 @@ import (
 	"github.com/emilyspringerton/emily-cli/cmd"
 )
 
-const version = "0.5.0"
+const version = "0.6.0"
 
 func main() {
 	args := os.Args[1:]
@@ -70,6 +70,8 @@ func main() {
 		code = cmd.RunPrimeTask(rest)
 	case "agents":
 		code = cmd.RunAgents(rest)
+	case "tui":
+		code = cmd.RunTUI(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
@@ -330,6 +332,10 @@ Usage:
   emily agents [--since N]
         Agent activity dashboard — last-seen, apple count, and last apple per repo.
         Synthesized from the Apples log. --since N = only agents active in last N minutes.
+
+  emily tui
+        Bloomberg-style terminal dashboard. Live panels: repos, Apple feed, process health.
+        Hotkeys: F1=fire RSI task, F2=run Tyler, F3=start system, F4=tail logs, r=refresh, q=quit.
 
 Environment:
   IDUNA_BASE_URL      IDUNA server (default: http://localhost:8080)
