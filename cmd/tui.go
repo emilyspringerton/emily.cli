@@ -133,52 +133,51 @@ type tokenEstimate struct {
 	RunsToday int
 }
 
-// evictStaleTUI kills any other running `emily tui` process and resets the
-// terminal to sane state. tview leaves the terminal in raw/alt-screen mode
-// when killed with Ctrl-C, so the next launch gets a broken terminal unless
-// we clean up first.
+const tuiPIDFile = "/tmp/emily-tui.pid"
+
+// evictStaleTUI kills any previous emily tui instance recorded in the PID
+// file, then resets the terminal. tview switches to the alternate screen
+// buffer and raw mode; if killed with Ctrl-C these are never restored.
+// We send the escape sequences directly to /dev/tty (reliable even when
+// stdout is in a broken state) before handing the terminal to tview.
 func evictStaleTUI() {
 	self := os.Getpid()
-	out, err := exec.Command("pgrep", "-f", "emily tui").Output()
-	if err != nil {
-		return // no matches
-	}
-	evicted := 0
-	for _, field := range strings.Fields(string(out)) {
-		pid, err := strconv.Atoi(field)
-		if err != nil || pid == self {
-			continue
-		}
-		proc, err := os.FindProcess(pid)
-		if err != nil {
-			continue
-		}
-		proc.Signal(syscall.SIGTERM)
-		evicted++
-	}
-	if evicted > 0 {
-		time.Sleep(150 * time.Millisecond)
-		// SIGKILL anything that didn't respond to SIGTERM
-		for _, field := range strings.Fields(string(out)) {
-			pid, err := strconv.Atoi(field)
-			if err != nil || pid == self {
-				continue
-			}
-			proc, _ := os.FindProcess(pid)
-			if proc != nil {
-				proc.Signal(syscall.SIGKILL)
+
+	// Kill the old instance if the PID file exists.
+	if raw, err := os.ReadFile(tuiPIDFile); err == nil {
+		if old, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil && old != self {
+			if proc, err := os.FindProcess(old); err == nil {
+				proc.Signal(syscall.SIGTERM)
+				time.Sleep(100 * time.Millisecond)
+				proc.Signal(syscall.SIGKILL) // ensure dead
+				fmt.Fprintf(os.Stderr, "emily tui: evicted stale pid %d\n", old)
 			}
 		}
-		fmt.Fprintf(os.Stderr, "evicted %d stale emily tui process(es)\n", evicted)
 	}
-	// Restore terminal regardless — a previous tview session may have left it
-	// in raw or alt-screen mode even if the process is already dead.
+
+	// Write our own PID so the next launch can find us.
+	os.WriteFile(tuiPIDFile, []byte(strconv.Itoa(self)), 0o644)
+
+	// Restore terminal unconditionally — the previous session may have left
+	// it in raw mode or the alternate screen buffer regardless of whether its
+	// process is still alive.
+	//
+	// Write directly to /dev/tty so this works even if stdout is redirected
+	// or in a broken state. Sequences:
+	//   \033[?1049l — exit alternate screen buffer (tview's rmcup)
+	//   \033[?25h   — show cursor   (tview hides it on start)
+	//   \033[0m     — reset SGR attributes (colors, bold, etc.)
+	if tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {
+		tty.WriteString("\033[?1049l\033[?25h\033[0m")
+		tty.Close()
+	}
 	exec.Command("stty", "sane").Run()
 }
 
 // RunTUI launches the Bloomberg-style terminal dashboard.
 func RunTUI(args []string) int {
 	evictStaleTUI()
+	defer os.Remove(tuiPIDFile)
 	cfg, _ := config.Resolve()
 
 	app := tview.NewApplication()
