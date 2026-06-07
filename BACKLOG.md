@@ -68,9 +68,9 @@
 - [ ] **emily agents list** — query IDUNA `/api/v1/agents` to show registered agents,
   their last heartbeat, and recent Apple count. Good for system health overview.
 
-- [ ] **emily prime-task <description>** — write a directed task JSON to
-  EMILY/signals/tasks/ for the observation-watcher's prime task poller to pick up.
-  Closes the Emily Prime → FatBaby directed loop from the CLI.
+- [x] **emily prime-task <description>** — writes task JSON to EMILY/signals/tasks/.
+  Flags: --type, --priority, --context, --criteria (repeatable), --deadline, --dry-run.
+  Obs-watcher picks it up within 10s → invokes Claude on FatBaby. Apple #44. 2026-06-07.
 
 - [ ] **color: internal/color tests** — test that Severity/Warn/Bold/Cyan return plain
   strings when EMILY_COLOR is unset, and return ANSI sequences when set.

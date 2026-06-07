@@ -64,6 +64,8 @@ func main() {
 		code = cmd.RunSync(rest)
 	case "install":
 		code = cmd.RunInstall(rest)
+	case "prime-task":
+		code = cmd.RunPrimeTask(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
@@ -193,6 +195,33 @@ Examples:
   emily sync --watch              # daemon: auto-post as obs files appear
   emily sync --watch --interval 5 # daemon with 5s poll
 `)
+	case "prime-task":
+		fmt.Print(`emily prime-task — write a directed task to EMILY/signals/tasks/
+
+The observation-watcher (PRRJECT_FATBABY) polls EMILY/signals/tasks/ every 10s.
+When it finds a new task file it invokes Claude Code on FatBaby with the task
+as the prompt. This closes the operator → Emily Prime → FatBaby directed loop.
+
+Usage:
+  emily prime-task [flags] <description>
+
+Flags:
+  --type string       task_type field (default: operator_directive)
+  --priority string   low|normal|high|critical (default: normal)
+  --context string    strategic context for Claude (optional)
+  --criteria string   acceptance criterion (repeatable)
+  --deadline string   optional deadline (free text)
+  --dry-run           print what would be written without writing it
+  --no-apple          skip IDUNA Apple receipt
+  --json              output JSON confirmation
+
+Examples:
+  emily prime-task "add test for eps-processor edge case in Q1 earnings"
+  emily prime-task --priority high --type improve_signal \
+    --criteria "go test ./... passes" \
+    "entity-graph parser misses director names with Jr. suffix"
+  emily prime-task --dry-run "preview task without writing"
+`)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: no help for %q — try: emily help\n", command)
 		return 1
@@ -231,6 +260,10 @@ Usage:
 
   emily install --cron [--write]
         Print recommended crontab entries. --write installs them.
+
+  emily prime-task [flags] <description>
+        Write a directed task to EMILY/signals/tasks/ for the obs-watcher.
+        Flags: --type, --priority, --context, --criteria (repeatable), --dry-run
 
 Environment:
   IDUNA_BASE_URL      IDUNA server (default: http://localhost:8080)
