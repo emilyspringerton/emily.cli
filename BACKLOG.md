@@ -36,9 +36,9 @@
 - [x] **emily status --watch** — live-updating dashboard. Clears terminal (ANSI \033[H\033[2J),
   reprints full status every --interval seconds (default 30). Ctrl-C exits cleanly. 2026-06-07.
 
-- [ ] **emily install --systemd** — generates a systemd unit file for `emily sync --watch
-  --quiet`. Writes to stdout; with `--write` installs to `~/.config/systemd/user/`.
-  Acceptance: `emily install --systemd` prints a valid unit file.
+- [x] **emily install --systemd** — generates systemd user unit for `emily sync --watch --quiet`.
+  `--write` installs to `~/.config/systemd/user/emily-sync.service`. Prints next steps.
+  2 new tests in install_test.go. 2026-06-07.
 
 ---
 

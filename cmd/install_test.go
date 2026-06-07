@@ -51,3 +51,32 @@ func TestRunInstall_cron_noWriteByDefault(t *testing.T) {
 		t.Errorf("print-only mode should mention --write: %q", out)
 	}
 }
+
+func TestRunInstall_systemd_print(t *testing.T) {
+	out := captureStdout(t, func() {
+		code := cmd.RunInstall([]string{"--systemd"})
+		if code != 0 {
+			t.Errorf("exit code: got %d want 0", code)
+		}
+	})
+
+	if !strings.Contains(out, "[Unit]") {
+		t.Errorf("systemd output should contain [Unit] section: %q", out)
+	}
+	if !strings.Contains(out, "emily sync") {
+		t.Errorf("systemd output should reference emily sync: %q", out)
+	}
+	if !strings.Contains(out, "emily-sync.service") {
+		t.Errorf("systemd output should mention the unit name: %q", out)
+	}
+}
+
+func TestRunInstall_systemd_noWriteByDefault(t *testing.T) {
+	out := captureStdout(t, func() {
+		cmd.RunInstall([]string{"--systemd"})
+	})
+	// Without --write, should print instructions
+	if !strings.Contains(out, "--write") {
+		t.Errorf("print-only mode should mention --write: %q", out)
+	}
+}
