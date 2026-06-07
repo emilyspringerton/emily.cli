@@ -38,6 +38,33 @@ type criteriaList []string
 func (c *criteriaList) String() string  { return strings.Join(*c, "; ") }
 func (c *criteriaList) Set(v string) error { *c = append(*c, v); return nil }
 
+// rsiTokenReportPreset is the canned RSI token-efficiency report task.
+// Dispatch with: emily prime-task --preset rsi-token-report
+var rsiTokenReportPreset = struct {
+	taskType    string
+	priority    string
+	description string
+	context     string
+	criteria    []string
+}{
+	taskType: "rsi_report",
+	priority: "high",
+	description: "Write a report on optimal token use for recursive self-improvement across the full Emily OS system. " +
+		"Analyse current token spend per cycle in emily-agent (cron.go RSI loop), observation-watcher invocations, " +
+		"and prime-task → Claude Code dispatches. Identify the highest-ROI improvements: " +
+		"e.g. prompt compression, caching, batching observations, gating trivial cycles. " +
+		"Produce a prioritised action list with estimated token savings per item. " +
+		"Then implement the top item as a concrete code change, commit it, and post findings as an IDUNA Apple.",
+	context: "This is a tic-toc RSI loop: Emily Prime writes the report, then Claude Code implements the top recommendation, " +
+		"then Emily Prime reviews the diff and iterates. Each iteration should move the needle on actual token efficiency.",
+	criteria: []string{
+		"report covers emily-agent RSI loop, observation-watcher, and prime-task dispatch",
+		"at least 3 prioritised improvements with estimated token impact",
+		"top item implemented as committed code change",
+		"IDUNA Apple posted with report summary and diff link",
+	},
+}
+
 func RunPrimeTask(args []string) int {
 	fs := flag.NewFlagSet("prime-task", flag.ContinueOnError)
 	taskType := fs.String("type", "operator_directive", "task_type field (e.g. operator_directive, improve_signal, rsi_loop)")
@@ -47,6 +74,7 @@ func RunPrimeTask(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "print the task JSON without writing it")
 	jsonOut := fs.Bool("json", false, "output JSON confirmation")
 	noApple := fs.Bool("no-apple", false, "skip IDUNA Apple receipt")
+	preset := fs.String("preset", "", "use a canned task preset: rsi-token-report")
 
 	var criteria criteriaList
 	fs.Var(&criteria, "criteria", "acceptance criterion (repeatable: --criteria 'tests pass' --criteria 'committed')")
@@ -55,9 +83,30 @@ func RunPrimeTask(args []string) int {
 		return 1
 	}
 
+	// Apply preset before reading free-form args
+	if *preset == "rsi-token-report" {
+		if *taskType == "operator_directive" { // only override default
+			*taskType = rsiTokenReportPreset.taskType
+		}
+		if *priority == "normal" {
+			*priority = rsiTokenReportPreset.priority
+		}
+		if *context == "" {
+			*context = rsiTokenReportPreset.context
+		}
+		if len(criteria) == 0 {
+			criteria = rsiTokenReportPreset.criteria
+		}
+	} else if *preset != "" {
+		fmt.Fprintf(os.Stderr, "unknown preset %q — available: rsi-token-report\n", *preset)
+		return 1
+	}
+
 	var description string
 	if fs.NArg() > 0 {
 		description = strings.Join(fs.Args(), " ")
+	} else if *preset == "rsi-token-report" {
+		description = rsiTokenReportPreset.description
 	} else {
 		fmt.Fprintln(os.Stderr, "usage: emily prime-task [flags] <description>")
 		fs.PrintDefaults()

@@ -52,6 +52,8 @@ func main() {
 
 	var code int
 	switch command {
+	case "start":
+		code = cmd.RunStart(rest)
 	case "observe":
 		code = cmd.RunObserve(rest)
 	case "apples":
@@ -79,6 +81,32 @@ func main() {
 
 func printCommandHelp(command string) int {
 	switch command {
+	case "start":
+		fmt.Print(`emily start — launch the Emily OS agent stack in the background
+
+Usage:
+  emily start [flags]
+
+Flags:
+  --iduna      also start IDUNA via systemctl --user start iduna.service
+  --dry-run    show what would be started without actually starting anything
+
+Behavior:
+  1. (--iduna) Checks if iduna.service is active; starts it if not.
+  2. Starts observation-watcher as a detached background process.
+     Polls PRRJECT_FATBABY/var/emily-observations/ and EMILY/signals/tasks/
+     every 10s; invokes 'claude' when a new observation or prime-task arrives.
+  3. Starts emily-agent in daemon mode (~5m cycle with jitter).
+     Runs the RSI loop autonomously, posting Apple receipts to IDUNA.
+  Both processes log to EMILY/var/logs/.
+
+Idempotent: already-running processes are detected via pgrep and skipped.
+
+Examples:
+  emily start                   # start obs-watcher + emily-agent
+  emily start --iduna           # also bring up IDUNA
+  emily start --dry-run         # preview without starting
+`)
 	case "observe":
 		fmt.Print(`emily observe — post an observation to the FatBaby pipeline
 
@@ -266,6 +294,10 @@ Operator terminal for the Einhorn Industrial agent system.
 Docs: emily.cli/docs/NORTHSTAR.md
 
 Usage:
+  emily start [--iduna] [--dry-run]
+        Start the Emily OS agent stack in the background.
+        Launches observation-watcher + emily-agent daemon; --iduna also starts IDUNA.
+
   emily observe [flags] <message>
         Post an observation to the FatBaby pipeline.
         Flags: -s/--severity info|warn|error, --findings, --fix, --dry-run
