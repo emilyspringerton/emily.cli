@@ -43,8 +43,8 @@
 
 ## SECTION 2: POLISH
 
-- [ ] **auto-build script** — `scripts/build.sh` that builds, runs smoke tests, bumps version,
-  and installs to ~/.local/bin. Currently: manual `go build -o emily . && cp emily ~/.local/bin/`.
+- [x] **auto-build script** — `scripts/build.sh` builds, runs 4 smoke tests, and installs
+  to ~/.local/bin. `./scripts/build.sh --no-install --no-test` for CI. 2026-06-07.
 
 - [ ] **emily sync --watch** — run sync in a loop, polling for new FatBaby observation files.
   Replaces the manual `emily sync` call after each FatBaby cycle.
