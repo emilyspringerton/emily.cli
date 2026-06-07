@@ -42,14 +42,12 @@
 
 ## SECTION 1: ACTIVE
 
-- [ ] **Color output** — opt-in via `EMILY_COLOR=1` env. Severity coloring in `emily observe`
-  (red=error, yellow=warn, green=info). Dirty repo count in yellow for `emily status`.
-  Acceptance: `EMILY_COLOR=1 emily observe -s error "test"` shows red title line.
+- [x] **Color output** — `EMILY_COLOR=1` env. internal/color pkg. Severity in observe
+  (red=error, yellow=warn, green=info). Dirty count in yellow for status. 2026-06-07.
 
-- [ ] **emily install --cron** — writes recommended crontab entries:
-  `*/10 * * * * emily sync --watch --quiet` and `0 */4 * * * TYLER/scripts/cron-emily.sh`.
-  Prints the entries; with --write appends to crontab via `crontab -l | crontab -`.
-  Acceptance: `emily install --cron` prints correct entries; `--write` installs them.
+- [x] **emily install --cron** — prints 2 recommended crontab entries (sync + Tyler cron).
+  `--write` installs via `crontab -l | crontab -`, skipping already-present entries.
+  Binary path auto-resolved via `which emily` or $HOME/.local/bin/emily. 2026-06-07.
 
 ---
 

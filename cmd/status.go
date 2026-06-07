@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emilyspringerton/emily-cli/internal/color"
 	"github.com/emilyspringerton/emily-cli/internal/config"
 	"github.com/emilyspringerton/emily-cli/internal/iduna"
 )
@@ -110,7 +111,7 @@ func RunStatus(args []string) int {
 		for _, r := range repos {
 			dirtyTag := ""
 			if r.DirtyCount > 0 {
-				dirtyTag = fmt.Sprintf(" [+%d dirty]", r.DirtyCount)
+				dirtyTag = color.Warn(fmt.Sprintf(" [+%d dirty]", r.DirtyCount))
 			}
 			commit := r.LastCommit
 			if len(commit) > 60 {

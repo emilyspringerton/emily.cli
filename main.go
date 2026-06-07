@@ -21,7 +21,7 @@ import (
 	"github.com/emilyspringerton/emily-cli/cmd"
 )
 
-const version = "0.3.0"
+const version = "0.5.0"
 
 func main() {
 	args := os.Args[1:]
@@ -62,6 +62,8 @@ func main() {
 		code = cmd.RunStatus(rest)
 	case "sync":
 		code = cmd.RunSync(rest)
+	case "install":
+		code = cmd.RunInstall(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
@@ -223,8 +225,12 @@ Usage:
   emily status
         Cross-repo git state + last Apple per agent from IDUNA.
 
-  emily sync [--all] [--dry-run]
+  emily sync [--all] [--dry-run] [--watch]
         Sync FatBaby observations → IDUNA as signal_observation Apples.
+        --watch runs as a daemon, polling every --interval seconds.
+
+  emily install --cron [--write]
+        Print recommended crontab entries. --write installs them.
 
 Environment:
   IDUNA_BASE_URL      IDUNA server (default: http://localhost:8080)

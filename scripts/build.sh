@@ -36,12 +36,12 @@ if [[ "$NO_TEST" != "true" ]]; then
   echo "  [2/3] smoke tests..."
 
   # version
-  OUT=$("$BINARY" --version 2>&1)
-  if [[ "$OUT" != emily\ * ]]; then
-    echo "  FAIL: --version output unexpected: $OUT"
+  VERSION=$("$BINARY" --version 2>&1)
+  if [[ "$VERSION" != emily\ * ]]; then
+    echo "  FAIL: --version output unexpected: $VERSION"
     exit 1
   fi
-  echo "        --version: $OUT"
+  echo "        --version: $VERSION"
 
   # observe dry-run
   OUT=$("$BINARY" observe --dry-run "build-test-probe" 2>&1)

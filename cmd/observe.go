@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emilyspringerton/emily-cli/internal/color"
 	"github.com/emilyspringerton/emily-cli/internal/config"
 	"github.com/emilyspringerton/emily-cli/internal/iduna"
 	"github.com/emilyspringerton/emily-cli/internal/obs"
@@ -122,9 +123,10 @@ func RunObserve(args []string) int {
 		enc := json.NewEncoder(os.Stdout)
 		_ = enc.Encode(out)
 	} else {
-		fmt.Printf("✓ observation written\n")
+		label := color.Severity("✓ observation written", payload.Severity)
+		fmt.Println(label)
 		fmt.Printf("  path:     %s\n", path)
-		fmt.Printf("  severity: %s\n", payload.Severity)
+		fmt.Printf("  severity: %s\n", color.Severity(payload.Severity, payload.Severity))
 		fmt.Printf("  summary:  %s\n", payload.Summary)
 		if appleID > 0 {
 			fmt.Printf("  apple:    #%d filed to IDUNA\n", appleID)
