@@ -1,7 +1,7 @@
 # emily — Emily Lite CLI
 
-Operator terminal for the Einhorn Industrial agent system. Zero LLM calls, zero external
-dependencies. Every command is a direct HTTP call to IDUNA or a local file write.
+Operator terminal for the Einhorn Industrial agent system. Zero LLM calls, -zero external
+dependencies-. Every command is a direct HTTP call to IDUNA or a local file write.
 
 **Emily Lite**: super-tokenized, pipe-safe, stdin-aware, color-optional.
 
