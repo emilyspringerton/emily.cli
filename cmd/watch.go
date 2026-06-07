@@ -56,7 +56,8 @@ func RunWatch(args []string) int {
 		if *appleType != "" {
 			fmt.Printf("  filter: type=%s\n", *appleType)
 		}
-		fmt.Println("  ctrl-c to stop\n")
+		fmt.Println("  ctrl-c to stop")
+		fmt.Println()
 		fmt.Println("  ─────────────────────────────────────────────────────────────")
 	}
 
@@ -76,7 +77,8 @@ func RunWatch(args []string) int {
 		return 4
 	} else {
 		if !*quiet {
-			fmt.Println("  no existing apples — watching for first apple...\n")
+			fmt.Println("  no existing apples — watching for first apple...")
+			fmt.Println()
 		}
 	}
 

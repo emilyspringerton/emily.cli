@@ -175,12 +175,21 @@ Usage:
   emily sync [flags]
 
 Flags:
-  --all          Backfill all observations (not just new ones)
-  --dry-run      Show what would be posted
-  --limit int    Max observations to process (default 10)
-  --json         Output JSON summary
+  --all              Backfill all observations (not just new ones)
+  --dry-run          Show what would be posted
+  --limit int        Max observations to process per pass (default 10)
+  --watch            Daemon mode — poll for new obs files until Ctrl-C
+  --interval int     Poll interval in seconds for --watch mode (default 10)
+  --json             Output JSON per-Apple line
 
 State file: EMILY/var/fatbaby-synced.txt tracks what's been posted.
+
+Examples:
+  emily sync                      # sync up to 10 new observations
+  emily sync --all                # backfill everything
+  emily sync --dry-run --all      # preview what would be posted
+  emily sync --watch              # daemon: auto-post as obs files appear
+  emily sync --watch --interval 5 # daemon with 5s poll
 `)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: no help for %q — try: emily help\n", command)

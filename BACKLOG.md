@@ -45,8 +45,8 @@
 - [x] **auto-build script** — `scripts/build.sh` builds, runs 4 smoke tests, and installs
   to ~/.local/bin. `./scripts/build.sh --no-install --no-test` for CI. 2026-06-07.
 
-- [ ] **emily sync --watch** — run sync in a loop, polling for new FatBaby observation files.
-  Replaces the manual `emily sync` call after each FatBaby cycle.
+- [x] **emily sync --watch** — daemon mode. Runs syncPass every --interval seconds (default 10s).
+  Ctrl-C exits cleanly. `emily sync --watch --interval 5` for lower latency. 2026-06-07.
 
 - [ ] **EMILY repo reference** — update EMILY/BACKLOG.md to note emily.cli exists and is
   the canonical operator CLI. Cross-link to emily.cli repo.
@@ -70,8 +70,9 @@
   emily install --systemd  # generate systemd unit file for IDUNA
   ```
 
-- [ ] **Go test suite** — unit tests for internal/obs, internal/iduna (mock server),
-  internal/config (env var parsing). Acceptance: `go test ./...` passes.
+- [x] **Go test suite** — 23 tests across internal/obs (8), internal/config (7), internal/iduna (8).
+  Mock HTTP server for IDUNA auth, ListApples, PostApple, GetApple. `go test ./...` in build.sh.
+  2026-06-07.
 
 ---
 

@@ -81,6 +81,15 @@ if [[ "$NO_TEST" != "true" ]]; then
   echo "        help bogus: OK (non-zero exit)"
 
   echo "        all smoke tests passed"
+
+  # Go unit tests
+  echo ""
+  echo "  [2b/3] go test..."
+  if ! go test ./... 2>&1 | sed 's/^/        /'; then
+    echo "  FAIL: go test failed"
+    exit 1
+  fi
+  echo "        go test: all passed"
 fi
 
 # Install
