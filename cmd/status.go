@@ -20,6 +20,12 @@ import (
 	"github.com/emilyspringerton/emily-cli/internal/iduna"
 )
 
+type processState struct {
+	Name    string
+	Running bool
+	Note    string // optional detail (pid, unit state, etc.)
+}
+
 var repoDefs = []struct {
 	Name string
 	Path string
@@ -160,6 +166,8 @@ func RunStatus(args []string) int {
 		}
 	}
 
+	printProcesses(collectProcesses(cfg))
+
 	fmt.Println("\n──────────────────────────────────────────────────────")
 	fmt.Println()
 	return 0
@@ -242,6 +250,8 @@ func runStatusWatch(cfg *config.Config, noGit, noIDUNA bool, intervalSec int) in
 			}
 		}
 
+		printProcesses(collectProcesses(cfg))
+
 		fmt.Println("\n──────────────────────────────────────────────────────")
 	}
 
@@ -295,4 +305,58 @@ func countLines(repoPath, fname, needle string) int {
 		return 0
 	}
 	return strings.Count(string(content), needle)
+}
+
+// collectProcesses checks daemon liveness without blocking.
+func collectProcesses(cfg *config.Config) []processState {
+	procs := []processState{}
+
+	// observation-watcher — look for any process with that name in cmdline
+	out, _ := exec.Command("pgrep", "-f", "observation-watcher").Output()
+	pids := strings.TrimSpace(string(out))
+	if pids != "" {
+		procs = append(procs, processState{Name: "observation-watcher", Running: true, Note: "pid " + strings.ReplaceAll(pids, "\n", ",")})
+	} else {
+		procs = append(procs, processState{Name: "observation-watcher", Running: false})
+	}
+
+	// emily-sync systemd user unit
+	unitOut, err := exec.Command("systemctl", "--user", "is-active", "emily-sync.service").Output()
+	unitState := strings.TrimSpace(string(unitOut))
+	if err == nil && unitState == "active" {
+		procs = append(procs, processState{Name: "emily-sync.service", Running: true, Note: unitState})
+	} else if unitState != "" && unitState != "inactive" {
+		procs = append(procs, processState{Name: "emily-sync.service", Running: false, Note: unitState})
+	} else {
+		procs = append(procs, processState{Name: "emily-sync.service", Running: false, Note: "not installed"})
+	}
+
+	// Latest observation file age
+	latestLink := filepath.Join(cfg.FatBabyRoot, "var/emily-observations/latest.json")
+	if fi, err := os.Lstat(latestLink); err == nil {
+		target, _ := os.Readlink(latestLink)
+		age := time.Since(fi.ModTime()).Round(time.Minute)
+		note := fmt.Sprintf("%s  (%s old)", target, age)
+		procs = append(procs, processState{Name: "latest observation", Running: true, Note: note})
+	}
+
+	return procs
+}
+
+func printProcesses(procs []processState) {
+	fmt.Println("\n  PROCESSES")
+	fmt.Println("  ─────────")
+	for _, p := range procs {
+		sym := color.Severity("✓", "info")
+		label := p.Name
+		note := p.Note
+		if !p.Running {
+			sym = color.Severity("✗", "warn")
+		}
+		if note != "" {
+			fmt.Printf("  %s  %-25s  %s\n", sym, label, note)
+		} else {
+			fmt.Printf("  %s  %s\n", sym, label)
+		}
+	}
 }

@@ -53,6 +53,20 @@
 
 ---
 
+## SECTION 3: NEXT HORIZON
+
+- [x] **emily status PROCESSES section** — shows observation-watcher running state (pgrep -f),
+  emily-sync.service systemd unit state, and latest observation file path + age.
+  Both one-shot and --watch modes. Apple #63. 2026-06-07.
+
+- [ ] **emily status: obs-watcher tasks cursor** — show age of last task file in EMILY/signals/tasks/
+  and whether the tasks dir is empty. Gives visibility on prime-task delivery.
+
+- [ ] **emily apples list --since N** — filter by recency (minutes) not just count.
+  Useful for "what happened in the last hour" queries without scrolling.
+
+---
+
 ## BACKLOG PROTOCOL
 
 1. Pick the highest-priority `[ ]` item.
