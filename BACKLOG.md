@@ -12,67 +12,56 @@
 - [x] **docs layer** — NORTHSTAR.md, COMMANDS.md, DESIGN.md. Commit 61fc266. 2026-06-07.
 
 - [x] **v0.1.0: foundation + four commands** — go.mod, internal/config, internal/iduna,
-  internal/obs, cmd/observe, cmd/apples, cmd/status, cmd/sync. All compile and pass smoke
-  tests. Binary installed to ~/.local/bin/emily. Apple #37. 2026-06-07.
+  internal/obs, cmd/observe, cmd/apples, cmd/status, cmd/sync. Apple #37. 2026-06-07.
 
 - [x] **v0.2.0: observe auto-Apple + status --json** — emily observe posts Apple receipt
-  immediately after writing obs file (when IDUNA credentials available). emily status --json
-  outputs typed JSON (repos + last Apple per agent). Apple #38. 2026-06-07.
+  immediately. emily status --json outputs typed JSON. Apple #38. 2026-06-07.
+
+- [x] **emily watch** — IDUNA tail -f. Polls every N seconds, Ctrl-C clean exit.
+  Flags: --interval/-i, --repo/-r, --type/-t, --quiet. Apple #39. 2026-06-07.
+
+- [x] **observe stdin** — `echo "msg" | emily observe -s info` works. Apple #39. 2026-06-07.
+
+- [x] **emily apples get <id>** — full Apple body reader, --json. Apple #39. 2026-06-07.
+
+- [x] **command-specific help** — `emily help observe|apples|watch|status|sync`.
+  Full flag tables, behavior notes, examples. Smoke tested. 2026-06-07.
+
+- [x] **auto-build script** — `scripts/build.sh` builds + 6 smoke tests + go test + installs.
+  Flags: --no-install, --no-test. 2026-06-07.
+
+- [x] **EMILY repo reference** — EMILY/BACKLOG.md cross-links emily.cli. Apple #39. 2026-06-07.
+
+- [x] **emily sync --watch** — daemon mode. syncPass every --interval seconds (default 10s).
+  Ctrl-C clean exit. Apple #42. 2026-06-07.
+
+- [x] **Go test suite** — 23 tests: internal/obs (8), internal/config (7), internal/iduna (8).
+  httptest mock server for IDUNA. `go test ./...` wired into build.sh. Apple #42. 2026-06-07.
 
 ---
 
-## SECTION 1: CORE (immediate sprint)
+## SECTION 1: ACTIVE
 
-- [x] **emily watch** — follow mode for Apples log. Polls IDUNA every N seconds, prints new
-  Apples as they arrive. Like `tail -f` for the agent activity log. Apple #39. 2026-06-07.
-  Flags: --interval/-i N, --repo/-r, --type/-t, --quiet.
+- [ ] **Color output** — opt-in via `EMILY_COLOR=1` env. Severity coloring in `emily observe`
+  (red=error, yellow=warn, green=info). Dirty repo count in yellow for `emily status`.
+  Acceptance: `EMILY_COLOR=1 emily observe -s error "test"` shows red title line.
 
-- [x] **stdin input for observe** — read summary from stdin when no positional arg given
-  and stdin is a pipe. `echo "msg" | emily observe -s info` now works. Apple #39. 2026-06-07.
-
-- [x] **emily apples get <id>** — show full body of a single Apple by ID.
-  `emily apples get 39` shows full body, type, repo, run, recorded_at. --json also works.
-  Apple #39 receipt. 2026-06-07.
-
-- [x] **command-specific help** — `emily help observe|apples|watch|status|sync` prints
-  full flag tables, behavior notes, and examples for each command. Unknown command returns
-  exit 1. Smoke tests in build.sh. 2026-06-07.
+- [ ] **emily install --cron** — writes recommended crontab entries:
+  `*/10 * * * * emily sync --watch --quiet` and `0 */4 * * * TYLER/scripts/cron-emily.sh`.
+  Prints the entries; with --write appends to crontab via `crontab -l | crontab -`.
+  Acceptance: `emily install --cron` prints correct entries; `--write` installs them.
 
 ---
 
-## SECTION 2: POLISH
+## SECTION 2: INTEGRATION
 
-- [x] **auto-build script** — `scripts/build.sh` builds, runs 4 smoke tests, and installs
-  to ~/.local/bin. `./scripts/build.sh --no-install --no-test` for CI. 2026-06-07.
+- [ ] **observation-watcher prompt injection** — `emily observe` should write a `.prompt`
+  sidecar file next to the observation JSON. The observation-watcher (in PRRJECT_FATBABY)
+  checks for a `.prompt` file and prepends it to the Claude invocation context.
+  Currently: operator message is buried inside the JSON body.
 
-- [x] **emily sync --watch** — daemon mode. Runs syncPass every --interval seconds (default 10s).
-  Ctrl-C exits cleanly. `emily sync --watch --interval 5` for lower latency. 2026-06-07.
-
-- [ ] **EMILY repo reference** — update EMILY/BACKLOG.md to note emily.cli exists and is
-  the canonical operator CLI. Cross-link to emily.cli repo.
-
-- [ ] **Color output** — opt-in via `EMILY_COLOR=1` or `--color`. Severity coloring for
-  `emily observe` output (red=error, yellow=warn). Repo dirty tag in yellow.
-
----
-
-## SECTION 3: INTEGRATION
-
-- [ ] **observation-watcher prompt injection** — when `emily observe` fires, prepend the
-  observation text to the standard observation-watcher Claude prompt so the operator's
-  message is the first thing Claude reads. Currently: watcher injects the JSON file;
-  operator message is inside the JSON.
-
-- [ ] **emily install** — subcommand that writes the recommended crontab entry for
-  `emily sync` and `TYLER/scripts/cron-emily.sh` to the user's crontab.
-  ```
-  emily install --cron     # add crontab entries
-  emily install --systemd  # generate systemd unit file for IDUNA
-  ```
-
-- [x] **Go test suite** — 23 tests across internal/obs (8), internal/config (7), internal/iduna (8).
-  Mock HTTP server for IDUNA auth, ListApples, PostApple, GetApple. `go test ./...` in build.sh.
-  2026-06-07.
+- [ ] **cmd tests** — `cmd/observe_test.go`, `cmd/apples_test.go` covering flag parsing
+  and output format via captured stdout. Currently: cmd package has no test files.
 
 ---
 
