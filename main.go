@@ -5,6 +5,7 @@
 //   emily observe [flags] <message>        — post observation to FatBaby pipeline
 //   emily apples list [filter]             — query IDUNA Apples log
 //   emily apples post -t <type> <title>    — post Apple to IDUNA
+//   emily watch [repo]                     — tail IDUNA Apples log in real-time
 //   emily status                           — cross-repo git + IDUNA state
 //   emily sync [--all] [--dry-run]         — sync FatBaby observations → IDUNA
 //
@@ -20,7 +21,7 @@ import (
 	"github.com/emilyspringerton/emily-cli/cmd"
 )
 
-const version = "0.1.0"
+const version = "0.3.0"
 
 func main() {
 	args := os.Args[1:]
@@ -47,6 +48,8 @@ func main() {
 		code = cmd.RunObserve(rest)
 	case "apples":
 		code = cmd.RunApples(rest)
+	case "watch":
+		code = cmd.RunWatch(rest)
 	case "status":
 		code = cmd.RunStatus(rest)
 	case "sync":
@@ -77,6 +80,10 @@ Usage:
 
   emily apples post -t <type> <title> [body]
         Post an Apple to IDUNA. Body read from stdin if not given.
+
+  emily watch [repo]
+        Tail IDUNA Apples log in real-time. Polls every 5s (--interval N).
+        Prints new Apples as they arrive. Ctrl-C to stop.
 
   emily status
         Cross-repo git state + last Apple per agent from IDUNA.

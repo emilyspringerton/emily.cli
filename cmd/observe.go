@@ -6,6 +6,7 @@
 package cmd
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -32,13 +33,27 @@ func RunObserve(args []string) int {
 		return 1
 	}
 
-	if fs.NArg() == 0 {
+	var summary string
+	if fs.NArg() > 0 {
+		summary = fs.Arg(0)
+	} else {
+		// Read summary from stdin when piped (e.g. git log -1 --oneline | emily observe -s info)
+		fi, _ := os.Stdin.Stat()
+		if (fi.Mode() & os.ModeCharDevice) == 0 {
+			sc := bufio.NewScanner(os.Stdin)
+			var lines []string
+			for sc.Scan() {
+				lines = append(lines, sc.Text())
+			}
+			summary = strings.TrimSpace(strings.Join(lines, " "))
+		}
+	}
+	if summary == "" {
 		fmt.Fprintln(os.Stderr, "usage: emily observe [flags] <message>")
+		fmt.Fprintln(os.Stderr, "       echo \"message\" | emily observe [flags]")
 		fs.PrintDefaults()
 		return 1
 	}
-
-	summary := fs.Arg(0)
 
 	switch *severity {
 	case "info", "warn", "error":
