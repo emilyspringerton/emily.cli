@@ -340,6 +340,31 @@ func collectProcesses(cfg *config.Config) []processState {
 		procs = append(procs, processState{Name: "latest observation", Running: true, Note: note})
 	}
 
+	// Prime tasks directory — show pending task count and most recent file age
+	tasksDir := filepath.Join(cfg.EmilyRoot, "signals/tasks")
+	if entries, err := os.ReadDir(tasksDir); err == nil {
+		var newest os.FileInfo
+		var taskCount int
+		for _, e := range entries {
+			if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			taskCount++
+			if fi, err := e.Info(); err == nil {
+				if newest == nil || fi.ModTime().After(newest.ModTime()) {
+					newest = fi
+				}
+			}
+		}
+		if taskCount == 0 {
+			procs = append(procs, processState{Name: "prime-tasks/", Running: true, Note: "empty"})
+		} else {
+			age := time.Since(newest.ModTime()).Round(time.Minute)
+			note := fmt.Sprintf("%d file(s)  newest %s old", taskCount, age)
+			procs = append(procs, processState{Name: "prime-tasks/", Running: true, Note: note})
+		}
+	}
+
 	return procs
 }
 

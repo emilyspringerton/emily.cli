@@ -59,8 +59,8 @@
   emily-sync.service systemd unit state, and latest observation file path + age.
   Both one-shot and --watch modes. Apple #63. 2026-06-07.
 
-- [ ] **emily status: obs-watcher tasks cursor** — show age of last task file in EMILY/signals/tasks/
-  and whether the tasks dir is empty. Gives visibility on prime-task delivery.
+- [x] **emily status: prime-tasks/ visibility** — PROCESSES panel shows task file count + newest
+  age from EMILY/signals/tasks/. Empty dir shows "empty". Apple #65. 2026-06-07.
 
 - [x] **emily apples list --since N** — filter by recency (minutes) not just count.
   Fetches max(n,200) then filters by recorded_at > now-N*min. 6 new tests in apples_test.go.
