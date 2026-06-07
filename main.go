@@ -167,12 +167,19 @@ Usage:
   emily status [flags]
 
 Flags:
-  --no-git      Skip git repo checks
-  --no-iduna    Skip IDUNA Apple query
-  --json        Output full status as JSON (repos + last apples)
+  --no-git         Skip git repo checks
+  --no-iduna       Skip IDUNA Apple query
+  --json           Output full status as JSON (repos + last apples)
+  --watch          Live-updating mode — refresh every --interval seconds
+  --interval int   Refresh interval for --watch (default 30)
 
 Shows: branch, last commit, dirty count, backlog done/pending for each repo.
 Shows: last Apple per source_repo, total Apple count.
+
+Examples:
+  emily status                    # one-shot status
+  emily status --watch            # live dashboard, 30s refresh
+  emily status --watch --interval 10 --no-git  # IDUNA-only, 10s refresh
 `)
 	case "sync":
 		fmt.Print(`emily sync — sync FatBaby observations → IDUNA as signal_observation Apples

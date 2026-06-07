@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/emilyspringerton/emily-cli/internal/color"
@@ -53,12 +55,18 @@ func RunStatus(args []string) int {
 	noGit := fs.Bool("no-git", false, "skip git checks")
 	noIDUNA := fs.Bool("no-iduna", false, "skip IDUNA Apple query")
 	jsonOut := fs.Bool("json", false, "output JSON")
+	watch := fs.Bool("watch", false, "live-updating mode — refresh every --interval seconds until Ctrl-C")
+	interval := fs.Int("interval", 30, "refresh interval in seconds (--watch mode)")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 
 	cfg, _ := config.Resolve()
+
+	if *watch {
+		return runStatusWatch(cfg, *noGit, *noIDUNA, *interval)
+	}
 
 	// Collect repo states
 	var repos []repoStatus
@@ -155,6 +163,102 @@ func RunStatus(args []string) int {
 	fmt.Println("\n──────────────────────────────────────────────────────")
 	fmt.Println()
 	return 0
+}
+
+func runStatusWatch(cfg *config.Config, noGit, noIDUNA bool, intervalSec int) int {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// clearScreen sends ANSI codes to move cursor home and clear the screen.
+	clearScreen := func() {
+		fmt.Print("\033[H\033[2J")
+	}
+
+	printOnce := func() {
+		clearScreen()
+		var repos []repoStatus
+		if !noGit {
+			for _, r := range repoDefs {
+				repos = append(repos, collectRepoStatus(r.Name, r.Path))
+			}
+		}
+		var apples []iduna.Apple
+		idunaOnline := false
+		if !noIDUNA && cfg.IDUNAAgentSecret != "" {
+			client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
+			if a, err := client.ListApples(iduna.AppleListFilters{Limit: 100}); err == nil {
+				apples = a
+				idunaOnline = true
+			}
+		}
+
+		fmt.Printf("\n◈ EMILY OS — LIVE STATUS | refresh every %ds | ctrl-c to stop | %s\n",
+			intervalSec, time.Now().Format("2006-01-02 15:04:05"))
+		fmt.Println("══════════════════════════════════════════════════════")
+
+		if !noGit {
+			fmt.Println("\n  GIT REPOS")
+			fmt.Println("  ─────────")
+			for _, r := range repos {
+				dirtyTag := ""
+				if r.DirtyCount > 0 {
+					dirtyTag = color.Warn(fmt.Sprintf(" [+%d dirty]", r.DirtyCount))
+				}
+				commit := r.LastCommit
+				if len(commit) > 60 {
+					commit = commit[:59] + "…"
+				}
+				fmt.Printf("  %-20s  %s%s\n", r.Name, r.Branch, dirtyTag)
+				fmt.Printf("  %-20s  %s\n", "", commit)
+				if r.BacklogDone+r.BacklogOpen > 0 {
+					fmt.Printf("  %-20s  backlog: %d done / %d pending\n", "", r.BacklogDone, r.BacklogOpen)
+				}
+				fmt.Println()
+			}
+		}
+
+		if !noIDUNA {
+			if cfg.IDUNAAgentSecret == "" {
+				fmt.Printf("  IDUNA: (no credentials)\n")
+			} else if idunaOnline {
+				fmt.Printf("  IDUNA: %s ✓  (%d apples total)\n", cfg.IDUNABaseURL, len(apples))
+				fmt.Println("  ──────")
+				seen := map[string]bool{}
+				for _, a := range apples {
+					if seen[a.SourceRepo] {
+						continue
+					}
+					seen[a.SourceRepo] = true
+					ts := a.RecordedAt
+					if len(ts) >= 16 {
+						ts = ts[:16]
+					}
+					ts = strings.Replace(ts, "T", " ", 1)
+					fmt.Printf("    [%-15s]  %s  #%d  %s\n",
+						a.SourceRepo, ts, a.ID, truncate(a.Title, 45))
+				}
+			} else {
+				fmt.Printf("  IDUNA: %s (offline or auth failed)\n", cfg.IDUNABaseURL)
+			}
+		}
+
+		fmt.Println("\n──────────────────────────────────────────────────────")
+	}
+
+	printOnce()
+
+	ticker := time.NewTicker(time.Duration(intervalSec) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-sigCh:
+			fmt.Println("\n  stopped.")
+			return 0
+		case <-ticker.C:
+			printOnce()
+		}
+	}
 }
 
 func collectRepoStatus(name, path string) repoStatus {
