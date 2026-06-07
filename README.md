@@ -156,13 +156,13 @@ Full docs: [`docs/NORTHSTAR.md`](docs/NORTHSTAR.md) · [`docs/COMMANDS.md`](docs
 ## Development
 
 ```bash
-./scripts/build.sh              # build + 69 tests + install
+./scripts/build.sh              # build + 75 tests + install
 ./scripts/build.sh --no-install # CI mode
 go test ./...                   # unit tests only
 EMILY_COLOR=1 go test ./internal/color/...  # color-mode tests
 ```
 
-Tests: 69 across 5 packages (`cmd`, `internal/config`, `internal/iduna`, `internal/obs`, `internal/color`).
+Tests: 75 across 5 packages (`cmd`, `internal/config`, `internal/iduna`, `internal/obs`, `internal/color`).
 
 ---
 

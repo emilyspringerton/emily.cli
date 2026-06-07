@@ -39,12 +39,13 @@ func RunApples(args []string) int {
 
 func runApplesList(args []string) int {
 	fs := flag.NewFlagSet("apples list", flag.ContinueOnError)
-	limit := fs.Int("n", 20, "max apples to show")
+	limit := fs.Int("n", 20, "max apples to show (fetched before --since filter)")
 	fs.IntVar(limit, "limit", 20, "max apples to show")
 	appleType := fs.String("t", "", "filter by apple_type")
 	fs.StringVar(appleType, "type", "", "filter by apple_type")
 	repo := fs.String("r", "", "filter by source_repo")
 	fs.StringVar(repo, "repo", "", "filter by source_repo")
+	since := fs.Int("since", 0, "only show apples from the last N minutes (0 = all)")
 	full := fs.Bool("full", false, "show body text (first 5 lines)")
 	jsonOut := fs.Bool("json", false, "output JSON")
 
@@ -69,14 +70,36 @@ func runApplesList(args []string) int {
 		return 2
 	}
 
+	fetchLimit := *limit
+	if *since > 0 {
+		// Fetch more to cover the time window; the caller can raise -n if needed.
+		fetchLimit = max(fetchLimit, 200)
+	}
+
 	apples, err := client.ListApples(iduna.AppleListFilters{
-		Limit:      *limit,
+		Limit:      fetchLimit,
 		SourceRepo: *repo,
 		AppleType:  *appleType,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 2
+	}
+
+	if *since > 0 {
+		cutoff := time.Now().UTC().Add(-time.Duration(*since) * time.Minute)
+		var filtered []iduna.Apple
+		for _, a := range apples {
+			t, err := time.Parse(time.RFC3339, a.RecordedAt)
+			if err != nil {
+				// Try without fractional seconds
+				t, err = time.Parse("2006-01-02T15:04:05Z", a.RecordedAt)
+			}
+			if err != nil || t.After(cutoff) {
+				filtered = append(filtered, a)
+			}
+		}
+		apples = filtered
 	}
 
 	if *jsonOut {
@@ -86,6 +109,13 @@ func runApplesList(args []string) int {
 
 	printApplesTable(apples, *full)
 	return 0
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func runApplesPost(args []string) int {

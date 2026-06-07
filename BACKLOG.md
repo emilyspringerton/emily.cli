@@ -62,8 +62,9 @@
 - [ ] **emily status: obs-watcher tasks cursor** — show age of last task file in EMILY/signals/tasks/
   and whether the tasks dir is empty. Gives visibility on prime-task delivery.
 
-- [ ] **emily apples list --since N** — filter by recency (minutes) not just count.
-  Useful for "what happened in the last hour" queries without scrolling.
+- [x] **emily apples list --since N** — filter by recency (minutes) not just count.
+  Fetches max(n,200) then filters by recorded_at > now-N*min. 6 new tests in apples_test.go.
+  Total: 75 tests. Apple #64. 2026-06-07.
 
 ---
 
