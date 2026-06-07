@@ -34,10 +34,9 @@
   `emily apples get 39` shows full body, type, repo, run, recorded_at. --json also works.
   Apple #39 receipt. 2026-06-07.
 
-- [ ] **command-specific help** — `emily help observe`, `emily observe --help` should print
-  the observe-specific flag list and examples, not the global usage.
-  Currently: `emily observe --help` shows the flag.FlagSet default output (terse).
-  Acceptance: rich help text per command, matching docs/COMMANDS.md examples.
+- [x] **command-specific help** — `emily help observe|apples|watch|status|sync` prints
+  full flag tables, behavior notes, and examples for each command. Unknown command returns
+  exit 1. Smoke tests in build.sh. 2026-06-07.
 
 ---
 

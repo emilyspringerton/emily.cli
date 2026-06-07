@@ -66,6 +66,20 @@ if [[ "$NO_TEST" != "true" ]]; then
   fi
   echo "        apples get bad id: OK (non-zero exit)"
 
+  # command-specific help
+  OUT=$("$BINARY" help observe 2>&1)
+  if [[ "$OUT" != *"emily observe"* ]]; then
+    echo "  FAIL: help observe unexpected output"
+    exit 1
+  fi
+  echo "        help observe: OK"
+
+  if "$BINARY" help bogus 2>/dev/null; then
+    echo "  FAIL: help bogus should exit non-zero"
+    exit 1
+  fi
+  echo "        help bogus: OK (non-zero exit)"
+
   echo "        all smoke tests passed"
 fi
 
