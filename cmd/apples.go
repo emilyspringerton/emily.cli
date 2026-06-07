@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -196,16 +197,20 @@ func printApplesTable(apples []iduna.Apple, full bool) {
 }
 
 func printApplesJSON(apples []iduna.Apple) {
-	// Simple hand-rolled JSON array to avoid encoding/json import noise
-	fmt.Print("[")
-	for i, a := range apples {
-		if i > 0 {
-			fmt.Print(",")
-		}
-		fmt.Printf(`{"id":%d,"source_repo":%q,"apple_type":%q,"title":%q,"recorded_at":%q}`,
-			a.ID, a.SourceRepo, a.AppleType, a.Title, a.RecordedAt)
+	type out struct {
+		ID         int64  `json:"id"`
+		SourceRepo string `json:"source_repo"`
+		AppleType  string `json:"apple_type"`
+		Title      string `json:"title"`
+		RecordedAt string `json:"recorded_at"`
 	}
-	fmt.Println("]")
+	rows := make([]out, len(apples))
+	for i, a := range apples {
+		rows[i] = out{a.ID, a.SourceRepo, a.AppleType, a.Title, a.RecordedAt}
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(rows)
 }
 
 func truncate(s string, n int) string {

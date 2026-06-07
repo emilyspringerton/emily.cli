@@ -82,11 +82,10 @@ func printRepoStatus(name, path string, _ bool) {
 	if len(lastCommit) > 60 {
 		lastCommit = lastCommit[:59] + "…"
 	}
-	dirty := len(strings.TrimSpace(gitOutput(path, "status", "--porcelain")))
+	porcelain := strings.TrimSpace(gitOutput(path, "status", "--porcelain"))
 	dirtyTag := ""
-	if dirty > 0 {
-		// count lines
-		n := strings.Count(gitOutput(path, "status", "--porcelain"), "\n")
+	if porcelain != "" {
+		n := strings.Count(porcelain, "\n") + 1
 		dirtyTag = fmt.Sprintf(" [+%d dirty]", n)
 	}
 
