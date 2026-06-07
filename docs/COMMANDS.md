@@ -1,7 +1,7 @@
 # Emily CLI — Command Reference
 ## Full Specification for `emily` Binary
 
-*Last updated: 2026-06-07*
+*Last updated: 2026-06-07 — v0.3.0*
 
 ---
 
@@ -24,11 +24,13 @@ Post a human (or script) observation into the FatBaby observation pipeline.
 
 ```
 emily observe [flags] <message>
+echo "message" | emily observe [flags]
 
   -s, --severity string   Observation severity: info|warn|error (default: info)
   -f, --fix string        Suggested fix (optional)
   --findings string       Detailed findings (longer form; message becomes summary)
   --dry-run               Print the JSON that would be written, don't write it
+  --no-apple              Skip IDUNA Apple receipt (observation file still written)
 ```
 
 ### Behavior
@@ -46,6 +48,10 @@ The observation-watcher (`go run ./cmd/observation-watcher` in PRRJECT_FATBABY) 
 ```bash
 # Quick one-liner
 emily observe "jon-agent is returning 504s on /setups endpoint"
+
+# Pipe from another command (stdin mode — v0.3.0)
+git log -1 --oneline | emily observe -s info
+echo "IDUNA health check failed" | emily observe -s error --fix "restart iduna.service"
 
 # With severity and fix hint
 emily observe -s error "eps-processor dropped to 0 articles/hour" \
@@ -157,6 +163,57 @@ emily apples post -t backlog_completion -r EMILY "deployed systemd unit for IDUN
   type:  signal_observation
   title: redis heap is growing
   id:    37
+```
+
+---
+
+## emily watch
+
+Tail IDUNA Apples log in real-time. Bootstraps at the current highest Apple ID and
+prints new Apples as they arrive. Like `tail -f` for the agent activity log.
+
+```
+emily watch [flags] [repo]
+
+  -i, --interval int    Poll interval in seconds (default 5)
+  -r, --repo string     Filter by source_repo
+  -t, --type string     Filter by apple_type
+  --quiet               Suppress header and poll messages (good for scripting)
+  [repo]                Positional: same as --repo filter
+```
+
+### Behavior
+
+1. Fetches current Apples to determine the latest ID (bootstrap).
+2. Polls IDUNA every `--interval` seconds.
+3. Prints any Apple with ID > last seen ID, oldest first.
+4. Exits cleanly on Ctrl-C (SIGINT/SIGTERM).
+
+The bootstrap step means `emily watch` never re-prints old Apples — you only see
+activity that happened after the command started.
+
+### Examples
+
+```bash
+emily watch                    # watch all repos, 5s poll
+emily watch TYLER              # only TYLER apples
+emily watch --interval 2       # 2s poll for lower latency
+emily watch -t rsi_iteration   # only RSI iteration apples
+emily watch --quiet TYLER      # no header, machine-readable output stream
+```
+
+### Output
+
+```
+◈ EMILY OS — WATCH | http://localhost:8080 | poll every 5s
+  filter: repo=TYLER
+  ctrl-c to stop
+
+  ─────────────────────────────────────────────────────────────
+  bootstrapped at Apple #39 — watching for new apples...
+
+  +#  40  2026-06-07 08:12:03  [TYLER       ]  rsi_iteration         Tyler Build 0019 — Eastwind Shard reopen
+  +#  41  2026-06-07 08:15:47  [CLI         ]  backlog_completion     emily watch + observe stdin — v0.3.0
 ```
 
 ---
