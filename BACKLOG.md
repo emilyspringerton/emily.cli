@@ -53,13 +53,27 @@
 
 ## SECTION 2: INTEGRATION
 
-- [ ] **observation-watcher prompt injection** — `emily observe` should write a `.prompt`
-  sidecar file next to the observation JSON. The observation-watcher (in PRRJECT_FATBABY)
-  checks for a `.prompt` file and prepends it to the Claude invocation context.
-  Currently: operator message is buried inside the JSON body.
+- [x] **cmd tests** — 16 tests across cmd/observe (7), cmd/install (3), cmd/sync (4) + shared
+  testutil. Captured stdout/stderr via os.Pipe(). Stdin injection via pipeStdin(). 2026-06-07.
 
-- [ ] **cmd tests** — `cmd/observe_test.go`, `cmd/apples_test.go` covering flag parsing
-  and output format via captured stdout. Currently: cmd package has no test files.
+- [ ] **observation-watcher: already rich** — watcher already puts Summary, Findings,
+  SuggestedFix at the top of its Claude prompt. The `.prompt` sidecar is deprioritized.
+  Future: if we want operator-custom prompts, add a `--prompt-prefix` flag to `emily observe`
+  that writes an extra field the watcher can pick up.
+
+---
+
+## SECTION 3: FUTURE
+
+- [ ] **emily agents list** — query IDUNA `/api/v1/agents` to show registered agents,
+  their last heartbeat, and recent Apple count. Good for system health overview.
+
+- [ ] **emily prime-task <description>** — write a directed task JSON to
+  EMILY/signals/tasks/ for the observation-watcher's prime task poller to pick up.
+  Closes the Emily Prime → FatBaby directed loop from the CLI.
+
+- [ ] **color: internal/color tests** — test that Severity/Warn/Bold/Cyan return plain
+  strings when EMILY_COLOR is unset, and return ANSI sequences when set.
 
 ---
 

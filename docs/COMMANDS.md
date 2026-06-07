@@ -258,19 +258,65 @@ Same as `EMILY/scripts/status.sh` — one screen, actionable:
 
 ## emily sync
 
-Sync FatBaby observations to IDUNA as Apples (wraps `EMILY/scripts/sync-fatbaby.sh`).
+Sync FatBaby observations to IDUNA as Apples.
 
 ```
 emily sync [flags]
 
-  --all         Backfill all observations (not just new ones)
-  --dry-run     Show what would be posted
-  --limit int   Max observations to process (default 10)
+  --all              Backfill all observations (not just new ones)
+  --dry-run          Show what would be posted
+  --limit int        Max observations to process per pass (default 10)
+  --watch            Daemon mode — poll obsDir every --interval seconds until Ctrl-C
+  --interval int     Poll interval for --watch (default 10)
+  --json             Output one JSON line per Apple posted
 ```
 
 ### Behavior
 
-Reads `PRRJECT_FATBABY/var/emily-observations/*.json`, posts unsynced ones to IDUNA as `signal_observation` Apples. State tracked in `EMILY/var/fatbaby-synced.txt`.
+Reads `PRRJECT_FATBABY/var/emily-observations/*.json`, posts unsynced ones to IDUNA as
+`signal_observation` Apples. State tracked in `EMILY/var/fatbaby-synced.txt`.
+
+With `--watch`: runs `syncPass` on startup, then polls every `--interval` seconds. Prints
+a timestamped line when new observations are posted. Ctrl-C exits cleanly.
+
+### Examples
+
+```bash
+emily sync                      # sync up to 10 new observations
+emily sync --all --dry-run      # preview all backlogged observations
+emily sync --watch              # daemon: auto-post as obs files appear
+emily sync --watch --interval 5 # 5s poll for lower latency
+```
+
+---
+
+## emily install
+
+Print (and optionally install) recommended crontab entries.
+
+```
+emily install --cron [--write]
+
+  --cron    Print recommended crontab entries
+  --write   Install them idempotently (appends to crontab, skips duplicates)
+```
+
+### Entries installed
+
+```cron
+*/10 * * * * /home/fatbaby/.local/bin/emily sync --quiet 2>/dev/null
+0 */4 * * * /home/fatbaby/TYLER/scripts/cron-emily.sh 2>/dev/null
+```
+
+The first syncs new FatBaby observations to IDUNA every 10 minutes.
+The second runs Tyler's RSI loop every 4 hours.
+
+### Examples
+
+```bash
+emily install --cron             # print entries
+emily install --cron --write     # install into crontab
+```
 
 ---
 
@@ -284,6 +330,7 @@ Reads `PRRJECT_FATBABY/var/emily-observations/*.json`, posts unsynced ones to ID
 | `FATBABY_ROOT` | `/home/fatbaby/PRRJECT_FATBABY` | PRRJECT_FATBABY root |
 | `EMILY_ROOT` | `/home/fatbaby/EMILY` | EMILY repo root |
 | `IDUNA_SECRETS` | `/home/fatbaby/IDUNA/var/agent-secrets.env` | Auto-sourced secrets |
+| `EMILY_COLOR` | — | Set to `1` to enable ANSI color output |
 
 If `IDUNA_AGENT_SECRET` is missing, Emily CLI auto-reads `IDUNA_SECRETS` (as a Go file parser, not shell `source`) and extracts the relevant secret for the configured `IDUNA_AGENT_NAME`.
 
