@@ -133,6 +133,7 @@ type tokenEstimate struct {
 	TodayK    float64
 	LastRunK  float64
 	RunsToday int
+	HasActual bool // true when at least one run report contains tokens_used
 }
 
 const tuiPIDFile = "/tmp/emily-tui.pid"
@@ -683,13 +684,54 @@ func estimateTokens(cfg *config.Config) tokenEstimate {
 		return tokenEstimate{}
 	}
 	today := time.Now().UTC().Format("2006-01-02")
+
+	type runReport struct {
+		TokensUsed int64 `json:"tokens_used"`
+	}
+
 	runsToday := 0
+	var todayTokens int64
+	var lastTokens int64
+	hasActual := false
+
+	// Walk all entries, accumulate today's runs and parse tokens_used if present.
+	// Sort descending so we encounter the most recent run first.
+	sortedEntries := make([]os.DirEntry, 0, len(entries))
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), today) {
-			runsToday++
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+			sortedEntries = append(sortedEntries, e)
 		}
 	}
-	return tokenEstimate{TodayK: float64(runsToday) * 8.2, LastRunK: 8.2, RunsToday: runsToday}
+	sort.Slice(sortedEntries, func(i, j int) bool {
+		return sortedEntries[i].Name() > sortedEntries[j].Name()
+	})
+
+	for _, e := range sortedEntries {
+		if !strings.HasPrefix(e.Name(), today) {
+			continue
+		}
+		runsToday++
+		data, readErr := os.ReadFile(filepath.Join(cfg.FatBabyRoot, "claude-runs", e.Name()))
+		if readErr != nil {
+			continue
+		}
+		var r runReport
+		if jsonErr := json.Unmarshal(data, &r); jsonErr == nil && r.TokensUsed > 0 {
+			todayTokens += r.TokensUsed
+			if !hasActual {
+				lastTokens = r.TokensUsed
+				hasActual = true
+			}
+		}
+	}
+
+	const estPerRunK = 8.2
+	if hasActual {
+		todayK := float64(todayTokens) / 1000.0
+		lastK := float64(lastTokens) / 1000.0
+		return tokenEstimate{TodayK: todayK, LastRunK: lastK, RunsToday: runsToday, HasActual: true}
+	}
+	return tokenEstimate{TodayK: float64(runsToday) * estPerRunK, LastRunK: estPerRunK, RunsToday: runsToday}
 }
 
 // ── Renderers ─────────────────────────────────────────────────────────────────
@@ -768,9 +810,13 @@ func renderRepoPanel(tv *tview.TextView, s *tuiState) {
 	if s.tokenEst.RunsToday == 0 {
 		sb.WriteString("  [darkgray]no runs today[-]\n")
 	} else {
+		qualifier := "[darkgray](est.)[-]"
+		if s.tokenEst.HasActual {
+			qualifier = "[green](actual)[-]"
+		}
 		sb.WriteString(fmt.Sprintf("  runs today:  [cyan]%d[-]\n", s.tokenEst.RunsToday))
-		sb.WriteString(fmt.Sprintf("  est. tokens: [cyan]~%.0fk[-]\n", s.tokenEst.TodayK))
-		sb.WriteString(fmt.Sprintf("  per run avg: [darkgray]~%.1fk[-]\n", s.tokenEst.LastRunK))
+		sb.WriteString(fmt.Sprintf("  tokens today: [cyan]%.0fk[-] %s\n", s.tokenEst.TodayK, qualifier))
+		sb.WriteString(fmt.Sprintf("  last run:    [darkgray]%.1fk[-]\n", s.tokenEst.LastRunK))
 	}
 
 	tv.SetText(sb.String())
