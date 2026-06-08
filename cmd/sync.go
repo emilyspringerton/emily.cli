@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sort"
@@ -31,6 +32,7 @@ func RunSync(args []string) int {
 	watch := fs.Bool("watch", false, "run in daemon mode — poll for new obs files until Ctrl-C")
 	interval := fs.Int("interval", 10, "poll interval in seconds (--watch mode)")
 	jsonOut := fs.Bool("json", false, "output JSON")
+	appleGitDir := fs.String("apples-git-dir", "", "git repo dir — write each posted Apple as JSON and auto-commit")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -55,25 +57,29 @@ func RunSync(args []string) int {
 	}
 
 	if *watch {
-		return runSyncWatch(obsDir, stateFile, client, *limit, *interval, *jsonOut)
+		return runSyncWatch(obsDir, stateFile, client, *limit, *interval, *jsonOut, *appleGitDir)
 	}
 
 	if !*jsonOut {
 		fmt.Printf("\n◈ EMILY OS — FATBABY OBSERVATION SYNC | %s\n", time.Now().Format("2006-01-02 15:04"))
 	}
 	posted := loadPosted(stateFile)
-	n, skipped := syncPass(obsDir, stateFile, client, posted, *all, *limit, *dryRun, *jsonOut)
+	n, skipped := syncPass(obsDir, stateFile, client, posted, *all, *limit, *dryRun, *jsonOut, *appleGitDir)
 	if !*jsonOut {
 		fmt.Printf("\n  Done. Posted: %d | Skipped (already synced): %d\n\n", n, skipped)
 	}
 	return 0
 }
 
-func runSyncWatch(obsDir, stateFile string, client *iduna.Client, limit, intervalSec int, jsonOut bool) int {
+func runSyncWatch(obsDir, stateFile string, client *iduna.Client, limit, intervalSec int, jsonOut bool, appleGitDir string) int {
 	if !jsonOut {
 		fmt.Printf("\n◈ EMILY OS — SYNC WATCH | poll every %ds | ctrl-c to stop\n", intervalSec)
 		fmt.Printf("  obsDir:    %s\n", obsDir)
-		fmt.Printf("  stateFile: %s\n\n", stateFile)
+		fmt.Printf("  stateFile: %s\n", stateFile)
+		if appleGitDir != "" {
+			fmt.Printf("  apples:    %s (git archive)\n", appleGitDir)
+		}
+		fmt.Println()
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -84,7 +90,7 @@ func runSyncWatch(obsDir, stateFile string, client *iduna.Client, limit, interva
 
 	// Run once immediately before first tick
 	posted := loadPosted(stateFile)
-	n, _ := syncPass(obsDir, stateFile, client, posted, false, limit, false, jsonOut)
+	n, _ := syncPass(obsDir, stateFile, client, posted, false, limit, false, jsonOut, appleGitDir)
 	if !jsonOut && n > 0 {
 		fmt.Printf("  [%s] posted %d new observation(s)\n", time.Now().Format("15:04:05"), n)
 	}
@@ -98,7 +104,7 @@ func runSyncWatch(obsDir, stateFile string, client *iduna.Client, limit, interva
 			return 0
 		case <-ticker.C:
 			posted = loadPosted(stateFile) // refresh state each poll
-			n, _ := syncPass(obsDir, stateFile, client, posted, false, limit, false, jsonOut)
+			n, _ := syncPass(obsDir, stateFile, client, posted, false, limit, false, jsonOut, appleGitDir)
 			if !jsonOut && n > 0 {
 				fmt.Printf("  [%s] posted %d new observation(s)\n", time.Now().Format("15:04:05"), n)
 			}
@@ -106,7 +112,7 @@ func runSyncWatch(obsDir, stateFile string, client *iduna.Client, limit, interva
 	}
 }
 
-func syncPass(obsDir, stateFile string, client *iduna.Client, posted map[string]bool, all bool, limit int, dryRun bool, jsonOut bool) (nPosted, nSkipped int) {
+func syncPass(obsDir, stateFile string, client *iduna.Client, posted map[string]bool, all bool, limit int, dryRun bool, jsonOut bool, appleGitDir string) (nPosted, nSkipped int) {
 	entries, err := filepath.Glob(filepath.Join(obsDir, "*.json"))
 	if err != nil || len(entries) == 0 {
 		return 0, 0
@@ -162,6 +168,10 @@ func syncPass(obsDir, stateFile string, client *iduna.Client, posted map[string]
 		markPosted(stateFile, fname)
 		posted[fname] = true
 		nPosted++
+		// Archive to git repo if configured.
+		if appleGitDir != "" {
+			archiveAppleToGit(appleGitDir, id, payload, !jsonOut)
+		}
 	}
 	return nPosted, nSkipped
 }
@@ -262,4 +272,61 @@ func limit400(s string) string {
 		return s
 	}
 	return s[:399] + "…"
+}
+
+// archiveAppleToGit writes an Apple as a JSON file to a git-tracked directory
+// and auto-commits. The file path is <gitDir>/<YYYYMMDD>/<id>_<type>.json.
+// Best-effort: failures are logged but do not abort the sync.
+func archiveAppleToGit(gitDir string, id int64, payload *iduna.ApplePayload, verbose bool) {
+	today := time.Now().UTC().Format("20060102")
+	dir := filepath.Join(gitDir, today)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		if verbose {
+			fmt.Printf("  [apples-git] mkdir %s: %v\n", dir, err)
+		}
+		return
+	}
+	fname := fmt.Sprintf("%d_%s.json", id, strings.ReplaceAll(payload.AppleType, "_", "-"))
+	fpath := filepath.Join(dir, fname)
+
+	record := map[string]interface{}{
+		"id":          id,
+		"apple_type":  payload.AppleType,
+		"source_repo": payload.SourceRepo,
+		"run_id":      payload.RunID,
+		"title":       payload.Title,
+		"body":        payload.Body,
+		"archived_at": time.Now().UTC().Format(time.RFC3339),
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(fpath, append(data, '\n'), 0o644); err != nil {
+		if verbose {
+			fmt.Printf("  [apples-git] write %s: %v\n", fpath, err)
+		}
+		return
+	}
+
+	// git add + commit (best-effort).
+	addCmd := exec.Command("git", "-C", gitDir, "add", filepath.Join(today, fname))
+	if err := addCmd.Run(); err != nil {
+		if verbose {
+			fmt.Printf("  [apples-git] git add: %v\n", err)
+		}
+		return
+	}
+	commitMsg := fmt.Sprintf("apple: #%d %s — %s", id, payload.AppleType, truncate(payload.Title, 60))
+	commitCmd := exec.Command("git", "-C", gitDir, "commit", "-m", commitMsg)
+	commitCmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=emily-sync", "GIT_COMMITTER_NAME=emily-sync")
+	if err := commitCmd.Run(); err != nil {
+		if verbose {
+			fmt.Printf("  [apples-git] git commit: %v\n", err)
+		}
+		return
+	}
+	if verbose {
+		fmt.Printf("  [apples-git] committed Apple #%d → %s/%s\n", id, today, fname)
+	}
 }
