@@ -54,7 +54,7 @@ func main() {
 	switch command {
 	case "start":
 		code = cmd.RunStart(rest)
-	case "observe":
+	case "observe", "eo":
 		code = cmd.RunObserve(rest)
 	case "apples":
 		code = cmd.RunApples(rest)
@@ -300,7 +300,7 @@ Usage:
         Start the Emily OS agent stack in the background.
         Launches observation-watcher + emily-agent daemon; --iduna also starts IDUNA.
 
-  emily observe [flags] <message>
+  emily observe [flags] <message>   (alias: emily eo)
         Post an observation to the FatBaby pipeline.
         Flags: -s/--severity info|warn|error, --findings, --fix, --dry-run
 
