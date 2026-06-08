@@ -1,16 +1,18 @@
 // cmd/tui.go — emily tui
 // Bloomberg-style terminal dashboard for the Einhorn Industrial agent stack.
 //
-// Layout (four-row grid):
-//   Row 0: Header — system name, timestamp, process indicators          (3 lines)
-//   Row 1: Main   — repos+tasks | apple feed | process health           (flexible)
-//   Row 2: Log    — RSI activity log, streams hotkey command output     (9 lines)
-//   Row 3: Footer — version + key hints                                 (1 line)
+// Layout (five-row grid):
+//   Row 0: Header  — system name, timestamp, process indicators         (3 lines)
+//   Row 1: Main    — repos+tasks | apple feed | process health          (flexible)
+//   Row 2: Log     — RSI activity log, streams hotkey command output    (9 lines)
+//   Row 3: CmdBar  — operator command input bar                         (1 line)
+//   Row 4: Footer  — version + key hints                                (1 line)
 //
 // Hotkeys:
 //   F1 — full RSI tic-toc cycle (TIC→TOCK→ENTROPY→ANALYZE), streams to log
 //   F2 — run Tyler emily.sh 2 iterations, streams to log
 //   F3 — emily start, streams to log
+//   :  — focus command input bar (pt, eo, tyler [N], start, refresh)
 //   r  — force refresh all panels
 //   q  — quit
 
@@ -210,6 +212,12 @@ func RunTUI(args []string) int {
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignLeft)
 
+	cmdInput := tview.NewInputField().
+		SetLabel("[darkgray]CMD:[-] ").
+		SetLabelWidth(6).
+		SetFieldBackgroundColor(tcell.ColorBlack).
+		SetFieldTextColor(tcell.ColorWhite)
+
 	for _, tv := range []*tview.TextView{repoPanel, feedPanel, healthPanel} {
 		tv.SetBorder(true)
 	}
@@ -223,9 +231,9 @@ func RunTUI(args []string) int {
 	logger := newTUILogger(logPanel, app)
 
 	// ── Layout ───────────────────────────────────────────────────────────────
-	// Rows: header(3) | main(flexible) | log(9) | footer(1)
+	// Rows: header(3) | main(flexible) | log(9) | cmdbar(1) | footer(1)
 	grid := tview.NewGrid().
-		SetRows(3, 0, 9, 1).
+		SetRows(3, 0, 9, 1, 1).
 		SetColumns(34, 0, 32).
 		SetBorders(false)
 
@@ -234,7 +242,8 @@ func RunTUI(args []string) int {
 	grid.AddItem(feedPanel, 1, 1, 1, 1, 0, 0, false)
 	grid.AddItem(healthPanel, 1, 2, 1, 1, 0, 0, false)
 	grid.AddItem(logPanel, 2, 0, 1, 3, 0, 0, false)
-	grid.AddItem(footer, 3, 0, 1, 3, 0, 0, false)
+	grid.AddItem(cmdInput, 3, 0, 1, 3, 0, 0, false)
+	grid.AddItem(footer, 4, 0, 1, 3, 0, 0, false)
 
 	// ── State + render ───────────────────────────────────────────────────────
 	var state tuiState
@@ -263,7 +272,7 @@ func RunTUI(args []string) int {
 	renderFeedPanel(feedPanel, &state)
 	renderHealthPanel(healthPanel, &state)
 	renderFooter(footer, &state)
-	logger.log("[darkgray]", "INFO", "emily tui ready — F1=RSI cycle  F2=Tyler  F3=start system  r=refresh  q=quit")
+	logger.log("[darkgray]", "INFO", "emily tui ready — F1=RSI  F2=Tyler  F3=start  :=cmd  r=refresh  q=quit")
 
 	// 15s data ticker — runs collectState (git, IDUNA, processes)
 	ticker := time.NewTicker(15 * time.Second)
@@ -282,6 +291,18 @@ func RunTUI(args []string) int {
 		}
 	}()
 	defer clockTicker.Stop()
+
+	// ── Command input bar ────────────────────────────────────────────────────
+	// Enter dispatches the command; Escape aborts and returns focus to logPanel.
+	cmdInput.SetDoneFunc(func(key tcell.Key) {
+		text := strings.TrimSpace(cmdInput.GetText())
+		cmdInput.SetText("")
+		app.SetFocus(logPanel)
+		if key == tcell.KeyEscape || text == "" {
+			return
+		}
+		go dispatchTUICmd(text, logger, cfg, refresh)
+	})
 
 	// ── Keyboard ──────────────────────────────────────────────────────────────
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -407,7 +428,15 @@ func RunTUI(args []string) int {
 			return nil
 
 		case tcell.KeyRune:
+			// Pass all runes through when the command bar is focused so the user
+			// can type freely without 'r' or 'q' triggering global hotkeys.
+			if app.GetFocus() == cmdInput {
+				return event
+			}
 			switch event.Rune() {
+			case ':':
+				app.SetFocus(cmdInput)
+				return nil
 			case 'r', 'R':
 				go func() {
 					logger.log("[darkgray]", "INFO", "Refreshing all panels...")
@@ -419,7 +448,8 @@ func RunTUI(args []string) int {
 				app.Stop()
 				return nil
 			case 'h', 'H':
-				logger.log("[white]", "HELP", "F1=RSI tic-toc  F2=Tyler entropy  F3=start system  F4=tail logs  r=refresh  q=quit")
+				logger.log("[white]", "HELP", "F1=RSI  F2=Tyler  F3=start  F4=logs  :=cmd  r=refresh  q=quit")
+				logger.log("[white]", "HELP", "CMD: pt <task>  eo <obs>  tyler [N]  start  refresh")
 				return nil
 			}
 		}
@@ -471,6 +501,90 @@ func tylerBacklogPending() int {
 		}
 	}
 	return count
+}
+
+// dispatchTUICmd parses and executes operator commands typed into the CMD bar.
+// Supported verbs:
+//
+//	pt <text>        — emily prime-task <text>
+//	prime-task <t>   — same
+//	eo <text>        — emily observe -s info <text>
+//	observe <text>   — same
+//	tyler [N]        — run TYLER/emily.sh N (default 2) iterations
+//	start            — emily start
+//	refresh          — refresh all panels
+func dispatchTUICmd(input string, logger *tuiLogger, cfg *config.Config, refresh func()) {
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return
+	}
+	verb := parts[0]
+	rest := strings.TrimSpace(strings.TrimPrefix(input, verb))
+
+	switch verb {
+	case "pt", "prime-task":
+		if rest == "" {
+			logger.log("[yellow]", "CMD ", "usage: pt <task description>")
+			return
+		}
+		logger.logf("[yellow]", "CMD ", "prime-task: %s", rest)
+		out, err := exec.Command("emily", "prime-task", rest).CombinedOutput()
+		if err != nil {
+			logger.logf("[red]", "ERR", "prime-task failed: %s", firstLine(string(out)))
+			return
+		}
+		taskID := parsePrimeTaskID(string(out))
+		logger.logf("[yellow]", "CMD ", "task dispatched: %s", taskID)
+		refresh()
+
+	case "eo", "observe":
+		if rest == "" {
+			logger.log("[yellow]", "CMD ", "usage: eo <observation>")
+			return
+		}
+		logger.logf("[green]", "CMD ", "observe: %s", rest)
+		out, err := exec.Command("emily", "observe", "-s", "info", rest).CombinedOutput()
+		if err != nil {
+			logger.logf("[yellow]", "CMD ", "observe warn: %s", firstLine(string(out)))
+		} else {
+			_ = out
+			logger.log("[green]", "CMD ", "observation posted")
+		}
+
+	case "tyler":
+		n := "2"
+		if len(parts) > 1 {
+			n = parts[1]
+		}
+		tylerSh := "/home/fatbaby/TYLER/emily.sh"
+		if _, err := os.Stat(tylerSh); err != nil {
+			logger.log("[red]", "ERR", "TYLER/emily.sh not found")
+			return
+		}
+		logger.logf("[magenta]", "CMD ", "Tyler %s iterations...", n)
+		cmd := exec.Command("bash", "-c", "cd /home/fatbaby/TYLER && ./emily.sh "+n+" 2>&1")
+		if err := logger.streamCmd("[magenta]", "ENTR", cmd); err != nil {
+			logger.logf("[yellow]", "CMD ", "Tyler error: %v", err)
+		} else {
+			logger.log("[green]", "CMD ", "Tyler complete")
+		}
+		refresh()
+
+	case "start":
+		logger.log("[cyan]", "CMD ", "emily start...")
+		cmd := exec.Command("emily", "start")
+		if err := logger.streamCmd("[cyan]", "SYS ", cmd); err != nil {
+			logger.logf("[yellow]", "CMD ", "emily start: %v", err)
+		}
+		refresh()
+
+	case "refresh", "r":
+		logger.log("[darkgray]", "CMD ", "refreshing...")
+		refresh()
+
+	default:
+		logger.logf("[yellow]", "CMD ", "unknown command %q — try: pt, eo, tyler [N], start, refresh", verb)
+	}
 }
 
 // ── Data collection ───────────────────────────────────────────────────────────
@@ -753,7 +867,7 @@ func renderHealthPanel(tv *tview.TextView, s *tuiState) {
 
 func renderFooter(tv *tview.TextView, s *tuiState) {
 	tv.SetText(fmt.Sprintf(
-		"[darkgray] emily tui v0.6.0 | %s | F1=tic-toc  F2=Tyler  F3=start  F4=logs  r=refresh  q=quit[-]",
+		"[darkgray] emily tui v0.7.0 | %s | F1=tic-toc  F2=Tyler  F3=start  F4=logs  :=cmd  r=refresh  q=quit[-]",
 		s.refreshedAt.Format("15:04:05"),
 	))
 }
