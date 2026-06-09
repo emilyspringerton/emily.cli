@@ -171,6 +171,7 @@ func syncPass(obsDir, stateFile string, client *iduna.Client, posted map[string]
 		// Archive to git repo if configured.
 		if appleGitDir != "" {
 			archiveAppleToGit(appleGitDir, id, payload, !jsonOut)
+			updateManifest(appleGitDir, id, payload, !jsonOut)
 		}
 	}
 	return nPosted, nSkipped
@@ -272,6 +273,91 @@ func limit400(s string) string {
 		return s
 	}
 	return s[:399] + "…"
+}
+
+// manifestEntry is one row in MANIFEST.json.
+type manifestEntry struct {
+	ID         int64  `json:"id"`
+	Type       string `json:"type"`
+	Title      string `json:"title"`
+	SourceRepo string `json:"source_repo"`
+	Date       string `json:"date"` // YYYYMMDD
+	ArchivedAt string `json:"archived_at"`
+}
+
+// manifest is the root of MANIFEST.json.
+type manifest struct {
+	GeneratedAt string          `json:"generated_at"`
+	Repo        string          `json:"repo"`
+	Count       int             `json:"count"`
+	Apples      []manifestEntry `json:"apples"`
+}
+
+// updateManifest reads MANIFEST.json (creating it if absent), appends the new entry,
+// writes it back, and commits it. Best-effort — failures are logged, sync continues.
+func updateManifest(gitDir string, id int64, payload *iduna.ApplePayload, verbose bool) {
+	manifestPath := filepath.Join(gitDir, "MANIFEST.json")
+	var m manifest
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		_ = json.Unmarshal(data, &m)
+	}
+	if m.Repo == "" {
+		m.Repo = "APPLES"
+	}
+
+	today := time.Now().UTC().Format("20060102")
+	entry := manifestEntry{
+		ID:         id,
+		Type:       payload.AppleType,
+		Title:      truncate(payload.Title, 140),
+		SourceRepo: payload.SourceRepo,
+		Date:       today,
+		ArchivedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// Avoid duplicates (idempotent on retry).
+	for _, e := range m.Apples {
+		if e.ID == id {
+			return
+		}
+	}
+	m.Apples = append(m.Apples, entry)
+	m.Count = len(m.Apples)
+	m.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
+
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(manifestPath, append(data, '\n'), 0o644); err != nil {
+		if verbose {
+			fmt.Printf("  [manifest] write error: %v\n", err)
+		}
+		return
+	}
+
+	addCmd := exec.Command("git", "-C", gitDir, "add", "MANIFEST.json")
+	if err := addCmd.Run(); err != nil {
+		if verbose {
+			fmt.Printf("  [manifest] git add: %v\n", err)
+		}
+		return
+	}
+	commitCmd := exec.Command("git", "-C", gitDir, "commit", "--amend", "--no-edit")
+	commitCmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=emily-sync", "GIT_COMMITTER_NAME=emily-sync")
+	if err := commitCmd.Run(); err != nil {
+		// amend failed (e.g. nothing staged) — try a fresh commit
+		commitCmd2 := exec.Command("git", "-C", gitDir, "commit", "-m",
+			fmt.Sprintf("manifest: update — %d apples", m.Count))
+		commitCmd2.Env = commitCmd.Env
+		if err2 := commitCmd2.Run(); err2 != nil && verbose {
+			fmt.Printf("  [manifest] git commit: %v\n", err2)
+			return
+		}
+	}
+	if verbose {
+		fmt.Printf("  [manifest] MANIFEST.json updated (%d total apples)\n", m.Count)
+	}
 }
 
 // archiveAppleToGit writes an Apple as a JSON file to a git-tracked directory
