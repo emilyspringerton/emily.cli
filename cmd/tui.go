@@ -249,6 +249,17 @@ func RunTUI(args []string) int {
 	// ── State + render ───────────────────────────────────────────────────────
 	var state tuiState
 	var feedHighWater int64
+	col2ShowObs := false // 't' toggles column 2 between Apple feed and obs tail
+
+	renderCol2 := func() {
+		if col2ShowObs {
+			feedPanel.SetTitle("[ OBS TAIL (live) ]").SetTitleAlign(tview.AlignLeft)
+			renderObsTailPanel(feedPanel, cfg.FatBabyRoot)
+		} else {
+			feedPanel.SetTitle("[ APPLE FEED (live) ]").SetTitleAlign(tview.AlignLeft)
+			renderFeedPanel(feedPanel, &state)
+		}
+	}
 
 	refresh := func() {
 		state = collectState(cfg)
@@ -260,7 +271,7 @@ func RunTUI(args []string) int {
 		app.QueueUpdateDraw(func() {
 			renderHeader(header, &state)
 			renderRepoPanel(repoPanel, &state)
-			renderFeedPanel(feedPanel, &state)
+			renderCol2()
 			renderHealthPanel(healthPanel, &state)
 			renderFooter(footer, &state)
 		})
@@ -270,10 +281,10 @@ func RunTUI(args []string) int {
 	state = collectState(cfg)
 	renderHeader(header, &state)
 	renderRepoPanel(repoPanel, &state)
-	renderFeedPanel(feedPanel, &state)
+	renderCol2()
 	renderHealthPanel(healthPanel, &state)
 	renderFooter(footer, &state)
-	logger.log("[darkgray]", "INFO", "emily tui ready — F1=RSI  F2=Tyler  F3=start  :=cmd  r=refresh  q=quit")
+	logger.log("[darkgray]", "INFO", "emily tui ready — F1=RSI  F2=Tyler  F3=start  t=obs  :=cmd  r=refresh  q=quit")
 
 	// 15s data ticker — runs collectState (git, IDUNA, processes)
 	ticker := time.NewTicker(15 * time.Second)
@@ -327,12 +338,12 @@ func RunTUI(args []string) int {
 
 				// ── TOCK ─────────────────────────────────────────────────
 				logger.log("[cyan]", "TOCK", "Polling claude-runs/ for Claude Code completion (max 3 min)...")
-				initialRuns := countFilesInDir(claudeRunsDir)
+				initialLatest := latestFileInDir(claudeRunsDir)
 				waitStart := time.Now()
 				for {
-					current := countFilesInDir(claudeRunsDir)
-					if current > initialRuns {
-						logger.logf("[cyan]", "TOCK", "Claude run detected — %d total runs in claude-runs/", current)
+					currentLatest := latestFileInDir(claudeRunsDir)
+					if currentLatest != "" && currentLatest != initialLatest {
+						logger.logf("[cyan]", "TOCK", "Claude run detected → %s", currentLatest)
 						break
 					}
 					elapsed := time.Since(waitStart)
@@ -448,8 +459,17 @@ func RunTUI(args []string) int {
 			case 'q', 'Q':
 				app.Stop()
 				return nil
+			case 't', 'T':
+				col2ShowObs = !col2ShowObs
+				app.QueueUpdateDraw(func() { renderCol2() })
+				mode := "APPLE FEED"
+				if col2ShowObs {
+					mode = "OBS TAIL"
+				}
+				logger.logf("[darkgray]", "INFO", "col2 → %s", mode)
+				return nil
 			case 'h', 'H':
-				logger.log("[white]", "HELP", "F1=RSI  F2=Tyler  F3=start  F4=logs  :=cmd  r=refresh  q=quit")
+				logger.log("[white]", "HELP", "F1=RSI  F2=Tyler  F3=start  F4=logs  t=obs  :=cmd  r=refresh  q=quit")
 				logger.log("[white]", "HELP", "CMD: pt <task>  eo <obs>  tyler [N]  start  refresh")
 				return nil
 			}
@@ -488,6 +508,81 @@ func countFilesInDir(dir string) int {
 		}
 	}
 	return n
+}
+
+// latestFileInDir returns the name of the most recently modified file in dir,
+// or "" if the directory is empty or unreadable. Used by TOCK detection.
+func latestFileInDir(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+	var latest os.DirEntry
+	var latestTime time.Time
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if latest == nil || info.ModTime().After(latestTime) {
+			latest = e
+			latestTime = info.ModTime()
+		}
+	}
+	if latest == nil {
+		return ""
+	}
+	return latest.Name()
+}
+
+// renderObsTailPanel fills the given panel with the last 10 lines of the most
+// recent observation file in fatbabyRoot/var/emily-observations/.
+func renderObsTailPanel(panel *tview.TextView, fatbabyRoot string) {
+	obsDir := filepath.Join(fatbabyRoot, "var", "emily-observations")
+	entries, err := os.ReadDir(obsDir)
+	if err != nil {
+		fmt.Fprintf(panel, "[red]obs dir unreadable: %v[-]\n", err)
+		return
+	}
+	// Find most-recently modified .json file (excluding dot files).
+	var latestPath string
+	var latestMod time.Time
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(latestMod) {
+			latestMod = info.ModTime()
+			latestPath = filepath.Join(obsDir, e.Name())
+		}
+	}
+	if latestPath == "" {
+		fmt.Fprintf(panel, "[darkgray]no observation files found[-]\n")
+		return
+	}
+	data, err := os.ReadFile(latestPath)
+	if err != nil {
+		fmt.Fprintf(panel, "[red]read error: %v[-]\n", err)
+		return
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) > 10 {
+		lines = lines[len(lines)-10:]
+	}
+	panel.Clear()
+	fmt.Fprintf(panel, "[darkgray]%s[-]\n", filepath.Base(latestPath))
+	for _, l := range lines {
+		// Escape tview markup characters to prevent rendering glitches.
+		l = strings.ReplaceAll(l, "[", "[[")
+		fmt.Fprintf(panel, "%s\n", l)
+	}
 }
 
 func tylerBacklogPending() int {
