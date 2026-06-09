@@ -38,6 +38,37 @@ type criteriaList []string
 func (c *criteriaList) String() string  { return strings.Join(*c, "; ") }
 func (c *criteriaList) Set(v string) error { *c = append(*c, v); return nil }
 
+// webAuditNewssitePreset asks Emily Prime to audit the FatBaby newssite as a real browser client.
+// Dispatch with: emily prime-task --preset web-audit-newssite
+var webAuditNewssitePreset = struct {
+	taskType    string
+	priority    string
+	description string
+	context     string
+	criteria    []string
+}{
+	taskType: "web_audit",
+	priority: "normal",
+	description: "Audit the FatBaby newssite (http://localhost:8082) as a real HTTP client using the web_audit_url tool. " +
+		"Check: (1) homepage loads with HTTP 200, title and h1 are present; " +
+		"(2) run with check_links=true to find all same-host links and detect any returning 4xx/5xx; " +
+		"(3) try at least 3 ticker pages (e.g. /ticker/AAPL, /ticker/AMZN, /ticker/MSFT) and verify they load; " +
+		"(4) check the signal API at http://localhost:8083/signals?ticker=AAPL if it responds; " +
+		"(5) post findings as a signal_observation Apple via emily observe. " +
+		"If the newssite is unreachable, note it as a warning (do not fail the task — the pipeline may be stopped).",
+	context: "Emily Prime now has the web_audit_url tool which lets her act as a real HTTP client against the product URLs. " +
+		"The FatBaby newssite (:8082) and SignalAPI (:8083) are the front door for the products, and they will eventually be surfaced " +
+		"inside the MJOLNIR Android app WebView. This audit validates that the front door is operational and reports any broken links " +
+		"or missing content. The newssite is server-rendered Go HTML templates — no JavaScript execution needed.",
+	criteria: []string{
+		"web_audit_url called on http://localhost:8082 with check_links=true",
+		"at least 3 ticker pages verified or noted as unreachable",
+		"signal API at :8083 tested",
+		"findings posted as signal_observation Apple via emily observe",
+		"summary includes HTTP status, title, link count, and any broken links",
+	},
+}
+
 // rsiTokenReportPreset is the canned RSI token-efficiency report task.
 // Dispatch with: emily prime-task --preset rsi-token-report
 var rsiTokenReportPreset = struct {
@@ -74,7 +105,7 @@ func RunPrimeTask(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "print the task JSON without writing it")
 	jsonOut := fs.Bool("json", false, "output JSON confirmation")
 	noApple := fs.Bool("no-apple", false, "skip IDUNA Apple receipt")
-	preset := fs.String("preset", "", "use a canned task preset: rsi-token-report")
+	preset := fs.String("preset", "", "use a canned task preset: rsi-token-report | entity-graph-refinement | eps-coverage-review | web-audit-newssite")
 
 	var criteria criteriaList
 	fs.Var(&criteria, "criteria", "acceptance criterion (repeatable: --criteria 'tests pass' --criteria 'committed')")
@@ -97,8 +128,21 @@ func RunPrimeTask(args []string) int {
 		if len(criteria) == 0 {
 			criteria = rsiTokenReportPreset.criteria
 		}
+	} else if *preset == "web-audit-newssite" {
+		if *taskType == "operator_directive" {
+			*taskType = webAuditNewssitePreset.taskType
+		}
+		if *priority == "normal" {
+			*priority = webAuditNewssitePreset.priority
+		}
+		if *context == "" {
+			*context = webAuditNewssitePreset.context
+		}
+		if len(criteria) == 0 {
+			criteria = webAuditNewssitePreset.criteria
+		}
 	} else if *preset != "" {
-		fmt.Fprintf(os.Stderr, "unknown preset %q — available: rsi-token-report\n", *preset)
+		fmt.Fprintf(os.Stderr, "unknown preset %q — available: rsi-token-report, web-audit-newssite\n", *preset)
 		return 1
 	}
 
@@ -107,6 +151,8 @@ func RunPrimeTask(args []string) int {
 		description = strings.Join(fs.Args(), " ")
 	} else if *preset == "rsi-token-report" {
 		description = rsiTokenReportPreset.description
+	} else if *preset == "web-audit-newssite" {
+		description = webAuditNewssitePreset.description
 	} else {
 		fmt.Fprintln(os.Stderr, "usage: emily prime-task [flags] <description>")
 		fs.PrintDefaults()
