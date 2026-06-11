@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -64,6 +66,7 @@ func RunStatus(args []string) int {
 	jsonOut := fs.Bool("json", false, "output JSON")
 	watch := fs.Bool("watch", false, "live-updating mode — refresh every --interval seconds until Ctrl-C")
 	interval := fs.Int("interval", 30, "refresh interval in seconds (--watch mode)")
+	fatbaby := fs.Bool("fatbaby", false, "also show PRRJECT_FATBABY service process states")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -72,7 +75,7 @@ func RunStatus(args []string) int {
 	cfg, _ := config.Resolve()
 
 	if *watch {
-		return runStatusWatch(cfg, *noGit, *noIDUNA, *interval)
+		return runStatusWatch(cfg, *noGit, *noIDUNA, *interval, *fatbaby)
 	}
 
 	// Collect repo states
@@ -168,13 +171,16 @@ func RunStatus(args []string) int {
 	}
 
 	printProcesses(collectProcesses(cfg))
+	if *fatbaby {
+		printProcesses(collectFatBabyProcesses(cfg))
+	}
 
 	fmt.Println("\n──────────────────────────────────────────────────────")
 	fmt.Println()
 	return 0
 }
 
-func runStatusWatch(cfg *config.Config, noGit, noIDUNA bool, intervalSec int) int {
+func runStatusWatch(cfg *config.Config, noGit, noIDUNA bool, intervalSec int, fatbaby bool) int {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
@@ -252,6 +258,9 @@ func runStatusWatch(cfg *config.Config, noGit, noIDUNA bool, intervalSec int) in
 		}
 
 		printProcesses(collectProcesses(cfg))
+		if fatbaby {
+			printProcesses(collectFatBabyProcesses(cfg))
+		}
 
 		fmt.Println("\n──────────────────────────────────────────────────────")
 	}
@@ -384,7 +393,74 @@ func collectProcesses(cfg *config.Config) []processState {
 		}
 	}
 
+	// emily tui — check PID file
+	if raw, err := os.ReadFile(tuiPIDFile); err == nil {
+		pid := strings.TrimSpace(string(raw))
+		if pidInt, err := strconv.Atoi(pid); err == nil && pidInt > 0 {
+			alive := false
+			if proc, err := os.FindProcess(pidInt); err == nil {
+				// kill -0 checks if process exists without sending a real signal
+				alive = proc.Signal(syscall.Signal(0)) == nil
+			}
+			procs = append(procs, processState{Name: "emily-tui", Running: alive,
+				Note: fmt.Sprintf("pid %s", pid)})
+		}
+	}
+
 	return procs
+}
+
+// collectFatBabyProcesses returns processState entries for PRRJECT_FATBABY services.
+func collectFatBabyProcesses(cfg *config.Config) []processState {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	fatbaby := []struct{ name, pattern string }{
+		{"newssite", "cmd/newssite"},
+		{"signalapi", "cmd/signalapi"},
+		{"eps-processor", "eps-processor"},
+		{"eps-reconciler", "eps-reconciler"},
+		{"entity-graph", "entity-graph"},
+		{"observation-watcher", "observation-watcher"},
+		{"secwatch", "cmd/secwatch"},
+	}
+
+	var procs []processState
+	for _, fb := range fatbaby {
+		out, _ := exec.CommandContext(ctx, "pgrep", "-f", fb.pattern).Output()
+		pids := strings.TrimSpace(string(out))
+		if pids != "" {
+			procs = append(procs, processState{Name: fb.name, Running: true,
+				Note: "pid " + strings.ReplaceAll(pids, "\n", ",")})
+		} else {
+			procs = append(procs, processState{Name: fb.name, Running: false})
+		}
+	}
+
+	// IDUNA — check health endpoint
+	idCtx, idCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer idCancel()
+	base := cfg.IDUNABaseURL
+	if base == "" {
+		base = "http://localhost:8080"
+	}
+	req, err := newGetRequest(idCtx, base+"/health")
+	if err == nil {
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			procs = append(procs, processState{Name: "IDUNA (:8080)", Running: resp.StatusCode < 500,
+				Note: fmt.Sprintf("HTTP %d", resp.StatusCode)})
+		} else {
+			procs = append(procs, processState{Name: "IDUNA (:8080)", Running: false, Note: "offline"})
+		}
+	}
+
+	return procs
+}
+
+func newGetRequest(ctx context.Context, url string) (*http.Request, error) {
+	return http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 }
 
 func printProcesses(procs []processState) {

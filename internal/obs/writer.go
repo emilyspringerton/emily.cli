@@ -21,6 +21,8 @@ type Payload struct {
 	Severity     string `json:"severity"`
 	Findings     string `json:"findings,omitempty"`
 	SuggestedFix string `json:"suggested_fix,omitempty"`
+	Amendment    string `json:"amendment,omitempty"`  // human correction note; original summary preserved
+	AmendedAt    string `json:"amended_at,omitempty"` // RFC3339 timestamp of amendment
 }
 
 // Write atomically writes an observation to root/var/emily-observations/.
@@ -64,5 +66,46 @@ func Write(fatBabyRoot string, p Payload) (string, error) {
 		_ = os.Rename(tmpLink, latestPath)
 	}
 
+	return fpath, nil
+}
+
+// Amend reads an existing observation file by its timestamp key, appends a
+// correction note, and writes it back. The original summary is preserved.
+// key must be an RFC3339 timestamp (e.g. "2026-06-11T01:24:22Z").
+func Amend(fatBabyRoot, key, amendment string) (string, error) {
+	dir := filepath.Join(fatBabyRoot, "var", "emily-observations")
+	// Try exact filename first, then fuzzy match
+	fname := strings.ReplaceAll(key, ":", "-") + ".json"
+	fpath := filepath.Join(dir, fname)
+	if _, err := os.Stat(fpath); os.IsNotExist(err) {
+		// Try with Z-suffix normalisation
+		alt := strings.TrimSuffix(strings.ReplaceAll(key, ":", "-"), "Z") + ".json"
+		if _, err2 := os.Stat(filepath.Join(dir, alt)); err2 == nil {
+			fname = alt
+			fpath = filepath.Join(dir, alt)
+		} else {
+			return "", fmt.Errorf("observation %q not found in %s", key, dir)
+		}
+	}
+
+	raw, err := os.ReadFile(fpath)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", fpath, err)
+	}
+	var p Payload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return "", fmt.Errorf("parse %s: %w", fpath, err)
+	}
+	p.Amendment = amendment
+	p.AmendedAt = time.Now().UTC().Format(time.RFC3339)
+
+	data, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(fpath, data, 0o644); err != nil {
+		return "", fmt.Errorf("write %s: %w", fpath, err)
+	}
 	return fpath, nil
 }

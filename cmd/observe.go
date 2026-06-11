@@ -21,6 +21,9 @@ import (
 )
 
 func RunObserve(args []string) int {
+	if len(args) > 0 && args[0] == "amend" {
+		return runObserveAmend(args[1:])
+	}
 	fs := flag.NewFlagSet("observe", flag.ContinueOnError)
 	severity := fs.String("s", "info", "severity: info|warn|error")
 	fs.StringVar(severity, "severity", "info", "severity: info|warn|error")
@@ -147,6 +150,31 @@ func buildObsBody(p obs.Payload) string {
 	}
 	parts = append(parts, "\nsource: emily observe (CLI)")
 	return strings.Join(parts, "\n")
+}
+
+func runObserveAmend(args []string) int {
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: emily observe amend <key> <correction>")
+		fmt.Fprintln(os.Stderr, "  key: RFC3339 timestamp from the observation (e.g. 2026-06-11T01:24:22Z)")
+		fmt.Fprintln(os.Stderr, "  correction: corrected text (original summary is preserved)")
+		return 1
+	}
+	key := args[0]
+	correction := strings.Join(args[1:], " ")
+
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
+		return 1
+	}
+
+	fpath, err := obs.Amend(cfg.FatBabyRoot, key, correction)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "amend error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("✓ observation amended\n  path:       %s\n  correction: %s\n", fpath, correction)
+	return 0
 }
 
 func printObsDryRun(p obs.Payload, jsonOut bool) {
