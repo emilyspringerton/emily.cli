@@ -21,7 +21,7 @@ import (
 	"github.com/emilyspringerton/emily-cli/cmd"
 )
 
-const version = "0.6.0"
+const version = "1.0.0"
 
 func main() {
 	args := os.Args[1:]
@@ -72,6 +72,8 @@ func main() {
 		code = cmd.RunAgents(rest)
 	case "tui":
 		code = cmd.RunTUI(rest)
+	case "backlog":
+		code = cmd.RunBacklog(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
@@ -255,6 +257,29 @@ Examples:
   emily agents --since 60   # agents active in the last hour
   emily agents --json       # JSON for scripts/piping
 `)
+	case "backlog":
+		fmt.Print(`emily backlog — manage the golden backlog
+
+Subcommands:
+  emily backlog curate [flags]   — auto-curate FatBaby observations into BACKLOG.md
+
+curate flags:
+  --all           Process all uncurated observations (not just most recent --limit)
+  --limit N       Max observations per pass (default 10)
+  --dry-run       Show what would be added; write nothing
+  --no-commit     Write BACKLOG.md but skip git commit
+  --no-apple      Skip IDUNA Apple receipt
+  --json          Output JSON summary
+
+State: EMILY/var/backlog-curated.txt — one timestamp per line, tracks curated set.
+Idempotent: running twice on the same obs set is a no-op.
+
+Examples:
+  emily backlog curate                    # curate up to 10 most recent uncurated obs
+  emily backlog curate --all              # curate all uncurated obs (up to limit)
+  emily backlog curate --limit 1          # curate only the most recent uncurated obs
+  emily backlog curate --dry-run --all    # preview without writing
+`)
 	case "prime-task":
 		fmt.Print(`emily prime-task — write a directed task to EMILY/signals/tasks/
 
@@ -336,6 +361,11 @@ Usage:
   emily tui
         Bloomberg-style terminal dashboard. Live panels: repos, Apple feed, process health.
         Hotkeys: F1=fire RSI task, F2=run Tyler, F3=start system, F4=tail logs, r=refresh, q=quit.
+
+  emily backlog curate [--all] [--limit N] [--dry-run]
+        Auto-curate FatBaby observations into EMILY/BACKLOG.md INTAKE QUEUE.
+        State-tracked (EMILY/var/backlog-curated.txt) — idempotent.
+        Commits BACKLOG.md and posts a curation Apple to IDUNA.
 
 Environment:
   IDUNA_BASE_URL      IDUNA server (default: http://localhost:8080)
