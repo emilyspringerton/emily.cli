@@ -126,14 +126,33 @@ func (l *tuiLogger) streamCmd(color, phase string, cmd *exec.Cmd) error {
 
 // tuiState holds all data rendered by the dashboard panels.
 type tuiState struct {
-	repos       []repoStatus
-	apples      []iduna.Apple
-	processes   []processState
-	tasks       tuiTaskState
-	rsiLoop     rsiLoopState
-	tokenEst    tokenEstimate
-	iduna       bool
-	refreshedAt time.Time
+	repos          []repoStatus
+	apples         []iduna.Apple
+	processes      []processState
+	fatbabySummary fatBabySummary
+	tasks          tuiTaskState
+	rsiLoop        rsiLoopState
+	tokenEst       tokenEstimate
+	iduna          bool
+	fatbabyMode    bool // --fatbaby flag: right panel shows FatBaby data
+	refreshedAt    time.Time
+}
+
+type fatBabySummary struct {
+	Processes    []processState
+	NodeCount    int
+	SignalCount  int
+	RecentSignal string // last signal type + ticker
+	EpsCount     int
+}
+
+type signalRecord struct {
+	Type      string  `json:"type"`
+	Ticker    string  `json:"ticker"`
+	Entity    string  `json:"entity"`
+	Severity  string  `json:"severity"`
+	Score     float64 `json:"score"`
+	FilingDate string `json:"filing_date"`
 }
 
 type tuiTaskState struct {
@@ -204,6 +223,13 @@ func RunTUI(args []string) int {
 	defer os.Remove(tuiPIDFile)
 	cfg, _ := config.Resolve()
 
+	fatbabyMode := false
+	for _, a := range args {
+		if a == "--fatbaby" || a == "-fatbaby" {
+			fatbabyMode = true
+		}
+	}
+
 	app := tview.NewApplication()
 
 	// ── Panels ──────────────────────────────────────────────────────────────
@@ -271,6 +297,7 @@ func RunTUI(args []string) int {
 	var state tuiState
 	var feedHighWater int64
 	col2ShowObs := false // 't' toggles column 2 between Apple feed and obs tail
+	col3ShowFatBaby := fatbabyMode // 'b' toggles col3; starts in fatbaby mode if --fatbaby set
 
 	renderCol2 := func() {
 		if col2ShowObs {
@@ -282,8 +309,22 @@ func RunTUI(args []string) int {
 		}
 	}
 
+	renderCol3 := func() {
+		if col3ShowFatBaby {
+			healthPanel.SetTitle("[ FATBABY SIGNALS ]").SetTitleAlign(tview.AlignLeft)
+			renderFatBabyPanel(healthPanel, &state)
+		} else {
+			healthPanel.SetTitle("[ SYSTEM HEALTH ]").SetTitleAlign(tview.AlignLeft)
+			renderHealthPanel(healthPanel, &state)
+		}
+	}
+
 	refresh := func() {
 		state = collectState(cfg)
+		state.fatbabyMode = col3ShowFatBaby
+		if state.fatbabyMode {
+			state.fatbabySummary = collectFatBabySummary(cfg)
+		}
 		for _, a := range state.apples {
 			if a.ID > feedHighWater {
 				feedHighWater = a.ID
@@ -296,19 +337,27 @@ func RunTUI(args []string) int {
 			renderHeader(header, &state)
 			renderRepoPanel(repoPanel, &state)
 			renderCol2()
-			renderHealthPanel(healthPanel, &state)
+			renderCol3()
 			renderFooter(footer, &state)
 		})
 	}
 
 	// Initial render
 	state = collectState(cfg)
+	state.fatbabyMode = col3ShowFatBaby
+	if state.fatbabyMode {
+		state.fatbabySummary = collectFatBabySummary(cfg)
+	}
 	renderHeader(header, &state)
 	renderRepoPanel(repoPanel, &state)
 	renderCol2()
-	renderHealthPanel(healthPanel, &state)
+	renderCol3()
 	renderFooter(footer, &state)
-	logger.log("[darkgray]", "INFO", "emily tui ready — F1=RSI  F2=Tyler  F3=start  t=obs  :=cmd  r=refresh  q=quit")
+	readyMsg := "emily tui ready — F1=RSI  F2=Tyler  F3=start  t=obs  b=fatbaby  :=cmd  r=refresh  q=quit"
+	if fatbabyMode {
+		readyMsg = "emily tui [fatbaby mode] — b=toggle health/fatbaby  t=obs  :=cmd  r=refresh  q=quit"
+	}
+	logger.log("[darkgray]", "INFO", readyMsg)
 
 	// 15s data ticker — runs collectState (git, IDUNA, processes)
 	ticker := time.NewTicker(15 * time.Second)
@@ -498,6 +547,19 @@ func RunTUI(args []string) int {
 					mode = "OBS TAIL"
 				}
 				logger.logf("[darkgray]", "INFO", "col2 → %s", mode)
+				return nil
+			case 'b', 'B':
+				col3ShowFatBaby = !col3ShowFatBaby
+				state.fatbabyMode = col3ShowFatBaby
+				if col3ShowFatBaby {
+					state.fatbabySummary = collectFatBabySummary(cfg)
+				}
+				app.QueueUpdateDraw(func() { renderCol3() })
+				mode := "SYSTEM HEALTH"
+				if col3ShowFatBaby {
+					mode = "FATBABY SIGNALS"
+				}
+				logger.logf("[darkgray]", "INFO", "col3 → %s", mode)
 				return nil
 			case 'h', 'H':
 				logger.log("[white]", "HELP", "F1=RSI  F2=Tyler  F3=start  F4=logs  t=obs  :=cmd  r=refresh  q=quit")
@@ -860,6 +922,39 @@ func estimateTokens(cfg *config.Config) tokenEstimate {
 	return tokenEstimate{TodayK: float64(runsToday) * estPerRunK, LastRunK: estPerRunK, RunsToday: runsToday}
 }
 
+func collectFatBabySummary(cfg *config.Config) fatBabySummary {
+	s := fatBabySummary{}
+	s.Processes = collectFatBabyProcesses(cfg)
+
+	signalsPath := filepath.Join(cfg.FatBabyRoot, "var", "entity-graph", "signals.ndjson")
+	if data, err := os.ReadFile(signalsPath); err == nil {
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		s.SignalCount = len(lines)
+		// Read last line for most recent signal
+		for i := len(lines) - 1; i >= 0; i-- {
+			if strings.TrimSpace(lines[i]) == "" {
+				continue
+			}
+			var sig signalRecord
+			if err := json.Unmarshal([]byte(lines[i]), &sig); err == nil {
+				s.RecentSignal = fmt.Sprintf("%s %s", sig.Ticker, sig.Type)
+			}
+			break
+		}
+	}
+
+	nodesPath := filepath.Join(cfg.FatBabyRoot, "var", "entity-graph", "nodes.ndjson")
+	if data, err := os.ReadFile(nodesPath); err == nil {
+		s.NodeCount = strings.Count(string(data), "\n")
+	}
+
+	epsDir := filepath.Join(cfg.FatBabyRoot, "var", "eps")
+	if entries, err := os.ReadDir(epsDir); err == nil {
+		s.EpsCount = len(entries)
+	}
+	return s
+}
+
 // ── Renderers ─────────────────────────────────────────────────────────────────
 
 func renderHeader(tv *tview.TextView, s *tuiState) {
@@ -1037,10 +1132,52 @@ func renderHealthPanel(tv *tview.TextView, s *tuiState) {
 	tv.SetText(sb.String())
 }
 
+func renderFatBabyPanel(tv *tview.TextView, s *tuiState) {
+	fb := &s.fatbabySummary
+	var sb strings.Builder
+	sb.WriteString("[white::b]FATBABY PROCESSES[-]\n")
+	for _, p := range fb.Processes {
+		indicator := "[red]● STOP[-]"
+		if p.Running {
+			indicator = "[green]● RUN [-]"
+		}
+		name := p.Name
+		if len(name) > 14 {
+			name = name[:14]
+		}
+		sb.WriteString(fmt.Sprintf("  %-14s %s\n", name, indicator))
+	}
+
+	sb.WriteString("\n[white::b]ENTITY GRAPH[-]\n")
+	sb.WriteString(fmt.Sprintf("  nodes:   [cyan]%d[-]\n", fb.NodeCount))
+	sb.WriteString(fmt.Sprintf("  signals: [cyan]%d[-]\n", fb.SignalCount))
+	if fb.RecentSignal != "" {
+		recent := fb.RecentSignal
+		if len(recent) > 22 {
+			recent = recent[:19] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("  latest:  [darkgray]%s[-]\n", recent))
+	}
+
+	sb.WriteString("\n[white::b]EPS[-]\n")
+	sb.WriteString(fmt.Sprintf("  cases:   [cyan]%d[-]\n", fb.EpsCount))
+
+	sb.WriteString("\n[white::b]ACTIONS[-]\n")
+	sb.WriteString("  [yellow][b] [-] toggle health/fatbaby\n")
+	sb.WriteString("  [yellow][r] [-] refresh\n")
+	sb.WriteString("  [yellow][q] [-] quit\n")
+
+	tv.SetText(sb.String())
+}
+
 func renderFooter(tv *tview.TextView, s *tuiState) {
+	fatbabySuffix := ""
+	if s.fatbabyMode {
+		fatbabySuffix = "  [yellow][FATBABY][-]"
+	}
 	tv.SetText(fmt.Sprintf(
-		"[darkgray] emily tui v0.7.0 | %s | F1=tic-toc  F2=Tyler  F3=start  F4=logs  :=cmd  r=refresh  q=quit[-]",
-		s.refreshedAt.Format("15:04:05"),
+		"[darkgray] emily tui v0.8.0 | %s | F1=tic-toc  F2=Tyler  F3=start  F4=logs  b=fatbaby  :=cmd  r=refresh  q=quit[-]%s",
+		s.refreshedAt.Format("15:04:05"), fatbabySuffix,
 	))
 }
 
