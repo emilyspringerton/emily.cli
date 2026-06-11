@@ -31,6 +31,8 @@ import (
 func RunStart(args []string) int {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	startIDUNA := fs.Bool("iduna", false, "also start IDUNA via systemctl --user start iduna.service")
+	startAll := fs.Bool("all", false, "also start newssite and FatBaby pipeline processes")
+	withNewssite := fs.Bool("newssite", false, "start the newssite on :8082")
 	dryRun := fs.Bool("dry-run", false, "show what would be started without starting anything")
 
 	if err := fs.Parse(args); err != nil {
@@ -74,15 +76,20 @@ func RunStart(args []string) int {
 
 	// Agent layer
 	procs := []struct {
-		name     string
-		pat      string // pgrep -f pattern
-		startFn  func(*config.Config, string, bool) (bool, string, error)
+		name    string
+		pat     string // pgrep -f pattern
+		startFn func(*config.Config, string, bool) (bool, string, error)
+		always  bool
 	}{
-		{"observation-watcher", "observation-watcher", startObservationWatcher},
-		{"emily-agent (daemon)", "emily-agent.*--daemon|go run.*cron.go.*--daemon", startEmilyAgent},
+		{"observation-watcher", "observation-watcher", startObservationWatcher, true},
+		{"emily-agent (daemon)", "emily-agent.*--daemon|go run.*emily-agent.*--daemon", startEmilyAgent, true},
+		{"newssite", "go run.*cmd/newssite", startNewssite, false},
 	}
 
 	for _, p := range procs {
+		if !p.always && !*startAll && !(p.name == "newssite" && *withNewssite) {
+			continue
+		}
 		fmt.Printf("  %-26s ", p.name)
 		if !*dryRun {
 			if pid, alive := pgrepFirst(p.pat); alive {
@@ -102,6 +109,9 @@ func RunStart(args []string) int {
 
 	if !*startIDUNA && !*dryRun {
 		fmt.Printf("\n  NOTE: use --iduna to also manage IDUNA. Agents will degrade gracefully if IDUNA is offline.\n")
+	}
+	if !*startAll && !*withNewssite && !*dryRun {
+		fmt.Printf("  NOTE: use --newssite or --all to also start the newssite on :8082.\n")
 	}
 
 	fmt.Println()
@@ -179,6 +189,42 @@ func startEmilyAgent(cfg *config.Config, logDir string, dryRun bool) (bool, stri
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
 		return false, "", fmt.Errorf("start emily-agent: %w", err)
+	}
+	logFile.Close()
+	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
+}
+
+// startNewssite launches the newssite on :8082 detached from the terminal.
+// It reads from var/secwatch and loads entity-graph, eps, commentary, and guidance stores.
+func startNewssite(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
+	goArgs := []string{
+		"run", "./cmd/newssite",
+		"-store", "var/secwatch",
+		"-graph-dir", "var/entity-graph",
+		"-eps-dir", "var/eps",
+		"-commentary-dir", "var/commentary",
+		"-guidance-dir", "var/guidance",
+		"-earnings-cal-dir", "var/earnings-calendar",
+	}
+
+	if dryRun {
+		return false, fmt.Sprintf("[dry-run] go %s  (dir: %s)", strings.Join(goArgs, " "), cfg.FatBabyRoot), nil
+	}
+
+	logPath := filepath.Join(cfg.FatBabyRoot, "var", "logs", "newssite.log")
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return false, "", fmt.Errorf("open log: %w", err)
+	}
+
+	cmd := exec.Command("go", goArgs...)
+	cmd.Dir = cfg.FatBabyRoot
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return false, "", fmt.Errorf("start newssite: %w", err)
 	}
 	logFile.Close()
 	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
