@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -310,9 +311,13 @@ func countLines(repoPath, fname, needle string) int {
 // collectProcesses checks daemon liveness without blocking.
 func collectProcesses(cfg *config.Config) []processState {
 	procs := []processState{}
+	// All external commands use a short timeout so TUI never hangs on a fresh boot
+	// where D-Bus or other system services may be unavailable.
+	cmdCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 
 	// observation-watcher — look for any process with that name in cmdline
-	out, _ := exec.Command("pgrep", "-f", "observation-watcher").Output()
+	out, _ := exec.CommandContext(cmdCtx, "pgrep", "-f", "observation-watcher").Output()
 	pids := strings.TrimSpace(string(out))
 	if pids != "" {
 		procs = append(procs, processState{Name: "observation-watcher", Running: true, Note: "pid " + strings.ReplaceAll(pids, "\n", ",")})
@@ -320,13 +325,27 @@ func collectProcesses(cfg *config.Config) []processState {
 		procs = append(procs, processState{Name: "observation-watcher", Running: false})
 	}
 
-	// emily-sync systemd user unit
-	unitOut, err := exec.Command("systemctl", "--user", "is-active", "emily-sync.service").Output()
+	// emily-agent — check if the emily-agent binary is running
+	agentOut, _ := exec.CommandContext(cmdCtx, "pgrep", "-f", "emily-agent").Output()
+	agentPids := strings.TrimSpace(string(agentOut))
+	if agentPids != "" {
+		procs = append(procs, processState{Name: "emily-agent", Running: true, Note: "pid " + strings.ReplaceAll(agentPids, "\n", ",")})
+	} else {
+		procs = append(procs, processState{Name: "emily-agent", Running: false})
+	}
+
+	// emily-sync systemd user unit — systemctl --user can block if D-Bus is unavailable
+	// (e.g. on a fresh boot before the user session is fully initialized).
+	unitCtx, unitCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer unitCancel()
+	unitOut, err := exec.CommandContext(unitCtx, "systemctl", "--user", "is-active", "emily-sync.service").Output()
 	unitState := strings.TrimSpace(string(unitOut))
 	if err == nil && unitState == "active" {
 		procs = append(procs, processState{Name: "emily-sync.service", Running: true, Note: unitState})
 	} else if unitState != "" && unitState != "inactive" {
 		procs = append(procs, processState{Name: "emily-sync.service", Running: false, Note: unitState})
+	} else if unitCtx.Err() != nil {
+		procs = append(procs, processState{Name: "emily-sync.service", Running: false, Note: "D-Bus timeout"})
 	} else {
 		procs = append(procs, processState{Name: "emily-sync.service", Running: false, Note: "not installed"})
 	}

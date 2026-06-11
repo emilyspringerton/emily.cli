@@ -47,10 +47,27 @@ type tuiLogger struct {
 	maxLines int
 	tv       *tview.TextView
 	app      *tview.Application
+	stopped  bool // set before app.Stop() to prevent post-stop QueueUpdateDraw races
 }
 
 func newTUILogger(tv *tview.TextView, app *tview.Application) *tuiLogger {
 	return &tuiLogger{tv: tv, app: app, maxLines: 500}
+}
+
+// setStopped signals all log/draw calls to become no-ops.
+// Call before app.Stop() to prevent the deadlock where goroutines call
+// QueueUpdateDraw on an already-stopped application.
+func (l *tuiLogger) setStopped() {
+	l.mu.Lock()
+	l.stopped = true
+	l.mu.Unlock()
+}
+
+func (l *tuiLogger) isStopped() bool {
+	l.mu.Lock()
+	v := l.stopped
+	l.mu.Unlock()
+	return v
 }
 
 // log appends one line. phaseTag is the label shown in brackets (e.g. "TIC", "TOCK").
@@ -64,7 +81,11 @@ func (l *tuiLogger) log(color, phaseTag, msg string) {
 		l.lines = l.lines[len(l.lines)-l.maxLines:]
 	}
 	joined := strings.Join(l.lines, "\n")
+	stopped := l.stopped
 	l.mu.Unlock()
+	if stopped {
+		return
+	}
 	l.app.QueueUpdateDraw(func() {
 		l.tv.SetText(joined)
 		l.tv.ScrollToEnd()
@@ -268,6 +289,9 @@ func RunTUI(args []string) int {
 				feedHighWater = a.ID
 			}
 		}
+		if logger.isStopped() {
+			return
+		}
 		app.QueueUpdateDraw(func() {
 			renderHeader(header, &state)
 			renderRepoPanel(repoPanel, &state)
@@ -299,7 +323,9 @@ func RunTUI(args []string) int {
 	clockTicker := time.NewTicker(time.Second)
 	go func() {
 		for range clockTicker.C {
-			app.QueueUpdateDraw(func() { renderHeader(header, &state) })
+			if !logger.isStopped() {
+				app.QueueUpdateDraw(func() { renderHeader(header, &state) })
+			}
 		}
 	}()
 	defer clockTicker.Stop()
@@ -457,6 +483,11 @@ func RunTUI(args []string) int {
 				}()
 				return nil
 			case 'q', 'Q':
+				// Stop tickers and mark logger stopped before stopping the app
+				// to prevent goroutines calling QueueUpdateDraw on a stopped app.
+				ticker.Stop()
+				clockTicker.Stop()
+				logger.setStopped()
 				app.Stop()
 				return nil
 			case 't', 'T':
