@@ -33,6 +33,7 @@ func RunSync(args []string) int {
 	interval := fs.Int("interval", 10, "poll interval in seconds (--watch mode)")
 	jsonOut := fs.Bool("json", false, "output JSON")
 	appleGitDir := fs.String("apples-git-dir", "", "git repo dir — write each posted Apple as JSON and auto-commit")
+	streamSync := fs.Bool("stream", false, "git add+commit var/emily-stream.ndjson in the EMILY repo")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -42,6 +43,10 @@ func RunSync(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
+	}
+
+	if *streamSync {
+		return runStreamSync(cfg.EmilyRoot, *dryRun, *jsonOut)
 	}
 
 	obsDir := filepath.Join(cfg.FatBabyRoot, "var", "emily-observations")
@@ -67,6 +72,61 @@ func RunSync(args []string) int {
 	n, skipped := syncPass(obsDir, stateFile, client, posted, *all, *limit, *dryRun, *jsonOut, *appleGitDir)
 	if !*jsonOut {
 		fmt.Printf("\n  Done. Posted: %d | Skipped (already synced): %d\n\n", n, skipped)
+	}
+	return 0
+}
+
+// runStreamSync commits var/emily-stream.ndjson in the EMILY repo.
+// This is the git-sync step for the single append-only system log.
+func runStreamSync(emilyRoot string, dryRun bool, jsonOut bool) int {
+	streamFile := filepath.Join(emilyRoot, "var", "emily-stream.ndjson")
+
+	info, err := os.Stat(streamFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if !jsonOut {
+				fmt.Println("stream: emily-stream.ndjson does not exist yet (no events written)")
+			}
+			return 0
+		}
+		fmt.Fprintf(os.Stderr, "stream: stat: %v\n", err)
+		return 1
+	}
+
+	if !jsonOut {
+		fmt.Printf("\n◈ EMILY OS — STREAM SYNC | %s | size: %d bytes\n", time.Now().Format("2006-01-02 15:04"), info.Size())
+	}
+
+	if dryRun {
+		if !jsonOut {
+			fmt.Printf("  [DRY-RUN] would git add+commit %s\n", streamFile)
+		}
+		return 0
+	}
+
+	msg := fmt.Sprintf("stream: sync %s", time.Now().UTC().Format("2006-01-02T15:04:05Z"))
+	addCmd := exec.Command("git", "-C", emilyRoot, "add", "var/emily-stream.ndjson")
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "stream: git add: %v\n%s\n", err, out)
+		return 1
+	}
+
+	commitCmd := exec.Command("git", "-C", emilyRoot, "diff", "--cached", "--quiet")
+	if commitCmd.Run() == nil {
+		if !jsonOut {
+			fmt.Println("  stream: nothing to commit (stream unchanged since last sync)")
+		}
+		return 0
+	}
+
+	commitCmd = exec.Command("git", "-C", emilyRoot, "commit", "-m", msg)
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "stream: git commit: %v\n%s\n", err, out)
+		return 1
+	}
+
+	if !jsonOut {
+		fmt.Printf("  stream: committed\n\n")
 	}
 	return 0
 }
