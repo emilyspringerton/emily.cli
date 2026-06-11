@@ -292,18 +292,36 @@ func extractSections(content string) []backlogSection {
 	return sections
 }
 
-// stripDoneItems removes all "- [x]" lines from numbered sections only.
+// stripDoneItems removes all "- [x]" lines and their continuation lines from numbered sections.
+// A continuation line is any indented line (starts with spaces/tab) that follows a [x] item,
+// with no blank line separator.
 func stripDoneItems(content string) string {
 	var out []string
 	inNumberedSection := false
+	inDoneItem := false // true while consuming continuation lines of a [x] item
+
 	for _, line := range strings.Split(content, "\n") {
 		if sectionHeaderRe.MatchString(line) {
 			inNumberedSection = true
+			inDoneItem = false
 		} else if strings.HasPrefix(line, "## INTAKE QUEUE") || strings.HasPrefix(line, "## BACKLOG PROTOCOL") {
 			inNumberedSection = false
+			inDoneItem = false
 		}
-		if inNumberedSection && strings.HasPrefix(line, "- [x]") {
-			continue
+
+		if inNumberedSection {
+			if strings.HasPrefix(line, "- [x]") {
+				inDoneItem = true
+				continue // drop the [x] line
+			}
+			if inDoneItem {
+				// Continuation lines are indented (start with space/tab).
+				if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+					continue // drop continuation line
+				}
+				// Blank line ends the done item block.
+				inDoneItem = false
+			}
 		}
 		out = append(out, line)
 	}
