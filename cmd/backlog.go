@@ -37,7 +37,15 @@ func RunBacklog(args []string) int {
 		}
 		return runBacklogCurate(rest)
 	}
-	fmt.Fprintf(os.Stderr, "emily backlog: unknown subcommand %q — try: curate\n", args[0])
+	switch args[0] {
+	case "promote":
+		return runBacklogPromote(args[1:])
+	case "archive":
+		return runBacklogArchive(args[1:])
+	case "compress":
+		return runBacklogCompress(args[1:])
+	}
+	fmt.Fprintf(os.Stderr, "emily backlog: unknown subcommand %q — try: curate, promote, archive, compress\n", args[0])
 	return 1
 }
 
@@ -251,26 +259,35 @@ func runBacklogCurate(args []string) int {
 }
 
 // isTrivialObs returns true for observations that are status pings rather than
-// actionable backlog items (RSI loop completions, heartbeats, etc.).
+// actionable backlog items (RSI loop completions, heartbeats, prime task receipts, etc.).
 func isTrivialObs(summary string) bool {
-	trivialPrefixes := []string{
-		"RSI loop iteration",
-		"rsi loop iteration",
-		"RSI: RSI loop",
-	}
 	lower := strings.ToLower(summary)
 	trivialSubstrings := []string{
 		"rsi loop iteration",
 		"tic-toc cycle done",
 		"fatbaby+tyler tic-toc",
-	}
-	for _, p := range trivialPrefixes {
-		if strings.HasPrefix(summary, p) {
-			return true
-		}
+		"prime task complete",
+		"rsi cycle complete",
+		"rsi session complete",
+		"rsi session ",
+		"emily.cli v0.",
+		"emily.cli rsi",
+		"emily.cli section",
+		"emily.cli first real",
+		"emily v0.2",
+		"emily v0.3",
+		"rsi: rsi loop",
 	}
 	for _, s := range trivialSubstrings {
 		if strings.Contains(lower, s) {
+			return true
+		}
+	}
+	// Single-word typos / test observations.
+	trimmed := strings.TrimSpace(summary)
+	trivialExact := []string{"tuo", "test", "ok", "ok ok"}
+	for _, t := range trivialExact {
+		if strings.EqualFold(trimmed, t) {
 			return true
 		}
 	}
