@@ -76,6 +76,8 @@ func main() {
 		code = cmd.RunBacklog(rest)
 	case "changelog":
 		code = cmd.RunChangelog(rest)
+	case "context":
+		code = cmd.RunContext(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
