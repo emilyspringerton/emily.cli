@@ -1,3 +1,7 @@
 emily
 emily-linux-amd64
 *.exe
+
+# Go workspace (local only)
+go.work
+go.work.sum
