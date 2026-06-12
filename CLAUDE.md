@@ -79,3 +79,11 @@ After any meaningful change, file an Apple:
 emily apples post -t completion "<title>" "<body with commit hash>"
 ```
 Then mark the item done in EMILY/BACKLOG.md and commit.
+
+## CHANGELOG Protocol
+
+After any meaningful change, update CHANGELOG.md:
+```bash
+emily changelog add emily.cli "<what changed>"
+# or manually: append a dated bullet under ## YYYY-MM-DD in emily.cli/CHANGELOG.md
+```
