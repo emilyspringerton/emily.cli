@@ -71,3 +71,11 @@ APPLES_GIT_DIR        — /home/fatbaby/APPLES (for emily sync --apples-git-dir)
 - `IDUNA` — IAM + Apples store (`:8080`); all auth and Apple calls go here
 - `PRRJECT_FATBABY` — Signal pipeline; obs-watcher reads files emily observe creates
 - `APPLES` — Apple git backup synced via `emily sync --apples-git-dir`
+
+## Apple Filing Protocol
+
+After any meaningful change, file an Apple:
+```bash
+emily apples post -t completion "<title>" "<body with commit hash>"
+```
+Then mark the item done in EMILY/BACKLOG.md and commit.
