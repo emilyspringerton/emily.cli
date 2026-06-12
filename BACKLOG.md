@@ -74,8 +74,8 @@
 
 ## SECTION 4: NEXT
 
-- [ ] **emily tui: token spend from IDUNA Apple bodies** — real token accounting.
-- [ ] **emily tui: inline command input bar** — tview.InputField for prime-task dispatch.
+- [x] **emily tui: token spend from IDUNA Apple bodies** — fetchTokenSpendFromIDUNA() fetches today emily-source Apples from IDUNA, extracts tokens_used from Apple metadata (requires GetApple individual fetch), shows emily-prime row in TOKEN BUDGET panel tagged "(IDUNA)". emily.cli d2c68d9. Done 2026-06-12. Apple #387.
+- [x] **emily tui: inline command input bar** — Already implemented in TUI v0.8.0: tview.InputField at Row 3, activated with ':', dispatches pt/prime-task/eo/observe/tyler/start/refresh. Done 2026-06-12. (verified, no new code needed)
 - [ ] **emily tui: F5 = fire RSI loop** — spawn rsi-loop.sh in background, show live status.
 
 ---

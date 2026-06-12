@@ -12,6 +12,8 @@
 //   F1 — full RSI tic-toc cycle (TIC→TOCK→ENTROPY→ANALYZE), streams to log
 //   F2 — run Tyler emily.sh 2 iterations, streams to log
 //   F3 — emily start, streams to log
+//   F4 — tail rsi-loop.log in suspended terminal
+//   F5 — fire 1 rsi-loop.sh iteration in background, streams to log
 //   :  — focus command input bar (pt, eo, tyler [N], start, refresh)
 //   r  — force refresh all panels
 //   q  — quit
@@ -515,6 +517,25 @@ func RunTUI(args []string) int {
 					exec.Command("tail", "-f", logPath).Run()
 				})
 				logger.log("[darkgray]", "LOG ", "Returned from log tail")
+			}()
+			return nil
+
+		case tcell.KeyF5:
+			// Fire one RSI loop iteration in background; stream output to log.
+			go func() {
+				rsiSh := "/home/fatbaby/EMILY/scripts/rsi-loop.sh"
+				if _, err := os.Stat(rsiSh); err != nil {
+					logger.log("[red]", "ERR", "EMILY/scripts/rsi-loop.sh not found")
+					return
+				}
+				logger.log("[green]", "RSI ", "Firing rsi-loop.sh (1 iteration, background)...")
+				cmd := exec.Command("bash", "-c", "cd /home/fatbaby/EMILY && MAX_ITERS=1 SKIP_WAIT=1 ./scripts/rsi-loop.sh 2>&1")
+				if err := logger.streamCmd("[green]", "RSI ", cmd); err != nil {
+					logger.logf("[yellow]", "RSI ", "rsi-loop finished with: %v", err)
+				} else {
+					logger.log("[green]", "RSI ", "rsi-loop iteration complete")
+				}
+				refresh()
 			}()
 			return nil
 
@@ -1175,7 +1196,7 @@ func renderHealthPanel(tv *tview.TextView, s *tuiState) {
 	sb.WriteString("\n[white::b]RSI LOOP[-]\n")
 	if !s.rsiLoop.Running {
 		sb.WriteString("  [darkgray]not running[-]\n")
-		sb.WriteString("  [darkgray]./scripts/rsi-loop.sh[-]\n")
+		sb.WriteString("  [yellow][F5][-] fire 1 iteration\n")
 	} else {
 		sb.WriteString(fmt.Sprintf("  iter:  [cyan]%d[-]\n", s.rsiLoop.Iteration))
 		sb.WriteString(fmt.Sprintf("  last:  [darkgray]%s[-]\n", s.rsiLoop.LastAt))
@@ -1192,6 +1213,8 @@ func renderHealthPanel(tv *tview.TextView, s *tuiState) {
 	sb.WriteString("  [yellow][F2][-] Tyler entropy\n")
 	sb.WriteString("  [yellow][F3][-] start system\n")
 	sb.WriteString("  [yellow][F4][-] tail rsi-loop log\n")
+	sb.WriteString("  [yellow][F5][-] fire RSI iteration\n")
+	sb.WriteString("  [yellow][:] [-] command bar\n")
 	sb.WriteString("  [yellow][r] [-] refresh\n")
 	sb.WriteString("  [yellow][q] [-] quit\n")
 
