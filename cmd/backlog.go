@@ -44,8 +44,10 @@ func RunBacklog(args []string) int {
 		return runBacklogArchive(args[1:])
 	case "compress":
 		return runBacklogCompress(args[1:])
+	case "done":
+		return runBacklogDone(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "emily backlog: unknown subcommand %q — try: curate, promote, archive, compress\n", args[0])
+	fmt.Fprintf(os.Stderr, "emily backlog: unknown subcommand %q — try: curate, promote, archive, compress, done\n", args[0])
 	return 1
 }
 
@@ -444,5 +446,94 @@ func sanitizeBacklogLine(s string) string {
 	s = strings.ReplaceAll(s, "**", "*")
 	// Trim to a reasonable length.
 	return truncate(s, 120)
+}
+
+// runBacklogDone marks a matching `- [ ]` item as `- [x]` in BACKLOG.md.
+// Usage: emily backlog done <match> [--apple-id N] [--no-commit] [--no-apple]
+func runBacklogDone(args []string) int {
+	fs := flag.NewFlagSet("backlog done", flag.ContinueOnError)
+	appleID := fs.Int64("apple-id", 0, "Apple ID to record alongside the done marker")
+	noCommit := fs.Bool("no-commit", false, "write BACKLOG.md but skip git commit")
+	noApple := fs.Bool("no-apple", false, "skip IDUNA Apple receipt")
+
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if len(fs.Args()) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: emily backlog done [--apple-id N] [--no-commit] <match>")
+		return 1
+	}
+	match := strings.Join(fs.Args(), " ")
+
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+
+	backlogPath := filepath.Join(cfg.EmilyRoot, "BACKLOG.md")
+	data, err := os.ReadFile(backlogPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read backlog: %v\n", err)
+		return 1
+	}
+
+	today := time.Now().UTC().Format("2006-01-02")
+	var suffix string
+	if *appleID > 0 {
+		suffix = fmt.Sprintf(" [Apple #%d, %s]", *appleID, today)
+	} else {
+		suffix = fmt.Sprintf(" [done %s]", today)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	matched := false
+	for i, line := range lines {
+		if !strings.Contains(line, "- [ ]") {
+			continue
+		}
+		if strings.Contains(strings.ToLower(line), strings.ToLower(match)) {
+			// Replace first `- [ ]` with `- [x]` and append suffix.
+			lines[i] = strings.Replace(line, "- [ ]", "- [x]", 1) + suffix
+			matched = true
+			fmt.Printf("  ✓ marked done: %s\n", truncate(line, 80))
+			break
+		}
+	}
+	if !matched {
+		fmt.Fprintf(os.Stderr, "backlog done: no open item matching %q\n", match)
+		return 1
+	}
+
+	if err := os.WriteFile(backlogPath, []byte(strings.Join(lines, "\n")), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "write backlog: %v\n", err)
+		return 1
+	}
+
+	if !*noCommit {
+		commitMsg := fmt.Sprintf("backlog: ✓ %s", truncate(match, 60))
+		if err := gitCommitBacklog(cfg.EmilyRoot, commitMsg); err != nil {
+			fmt.Fprintf(os.Stderr, "git commit: %v\n", err)
+			return 1
+		}
+		fmt.Println("  ✓ committed BACKLOG.md")
+	}
+
+	if !*noApple && cfg.IDUNAAgentSecret != "" {
+		client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
+		id, err := client.PostApple(iduna.ApplePayload{
+			SourceRepo: "emily.cli",
+			AppleType:  "completion",
+			Title:      fmt.Sprintf("backlog done: %s", truncate(match, 70)),
+			Body:       fmt.Sprintf("Marked done in BACKLOG.md. Match: %q. Apple: #%d.", match, *appleID),
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  apple post: %v (continuing)\n", err)
+		} else {
+			fmt.Printf("  ✓ Apple #%d filed\n", id)
+		}
+	}
+
+	return 0
 }
 

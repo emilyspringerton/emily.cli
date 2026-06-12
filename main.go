@@ -74,6 +74,8 @@ func main() {
 		code = cmd.RunTUI(rest)
 	case "backlog":
 		code = cmd.RunBacklog(rest)
+	case "changelog":
+		code = cmd.RunChangelog(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
