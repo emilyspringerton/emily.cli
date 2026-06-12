@@ -161,6 +161,7 @@ func postChangelogApple(cfg *config.Config, repoName, message string) error {
 	client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
 	_, err := client.PostApple(iduna.ApplePayload{
 		SourceRepo: repoName,
+		RunID:      fmt.Sprintf("changelog-%d", time.Now().Unix()),
 		AppleType:  "completion",
 		Title:      fmt.Sprintf("changelog(%s): %s", repoName, truncate(message, 60)),
 		Body:       fmt.Sprintf("CHANGELOG updated in %s: %s", repoName, message),

@@ -523,6 +523,7 @@ func runBacklogDone(args []string) int {
 		client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
 		id, err := client.PostApple(iduna.ApplePayload{
 			SourceRepo: "emily.cli",
+			RunID:      fmt.Sprintf("backlog-done-%d", time.Now().Unix()),
 			AppleType:  "completion",
 			Title:      fmt.Sprintf("backlog done: %s", truncate(match, 70)),
 			Body:       fmt.Sprintf("Marked done in BACKLOG.md. Match: %q. Apple: #%d.", match, *appleID),
