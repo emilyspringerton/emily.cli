@@ -174,6 +174,10 @@ type tokenEstimate struct {
 	LastRunK  float64
 	RunsToday int
 	HasActual bool // true when at least one run report contains tokens_used
+
+	// Emily Prime cron cycle tokens sourced from IDUNA Apple metadata.
+	EmilyPrimeTodayK float64
+	EmilyPrimeCycles int
 }
 
 const tuiPIDFile = "/tmp/emily-tui.pid"
@@ -802,6 +806,10 @@ func collectState(cfg *config.Config) tuiState {
 	s.tasks = collectTasks(cfg)
 	s.rsiLoop = collectRSIState(cfg)
 	s.tokenEst = estimateTokens(cfg)
+	if cfg.IDUNAAgentSecret != "" {
+		client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
+		s.tokenEst = mergeIDUNATokens(s.tokenEst, fetchTokenSpendFromIDUNA(client))
+	}
 	return s
 }
 
@@ -922,6 +930,56 @@ func estimateTokens(cfg *config.Config) tokenEstimate {
 	return tokenEstimate{TodayK: float64(runsToday) * estPerRunK, LastRunK: estPerRunK, RunsToday: runsToday}
 }
 
+// fetchTokenSpendFromIDUNA queries IDUNA for today's emily-source Apples and
+// extracts tokens_used from their metadata. Returns a partial tokenEstimate
+// with EmilyPrimeTodayK and EmilyPrimeCycles populated.
+func fetchTokenSpendFromIDUNA(client *iduna.Client) tokenEstimate {
+	apples, err := client.ListApples(iduna.AppleListFilters{
+		SourceRepo: "emily",
+		Limit:      100,
+	})
+	if err != nil {
+		return tokenEstimate{}
+	}
+
+	today := time.Now().UTC().Format("2006-01-02")
+	var totalTokens int64
+	cycles := 0
+
+	for _, a := range apples {
+		if !strings.HasPrefix(a.RecordedAt, today) {
+			continue
+		}
+		// Fetch full Apple body to get metadata with tokens_used.
+		full, err := client.GetApple(a.ID)
+		if err != nil || full == nil || len(full.Metadata) == 0 {
+			continue
+		}
+		var meta struct {
+			TokensUsed int64 `json:"tokens_used"`
+		}
+		if json.Unmarshal(full.Metadata, &meta) == nil && meta.TokensUsed > 0 {
+			totalTokens += meta.TokensUsed
+			cycles++
+		}
+	}
+
+	if cycles == 0 {
+		return tokenEstimate{}
+	}
+	return tokenEstimate{
+		EmilyPrimeTodayK: float64(totalTokens) / 1000.0,
+		EmilyPrimeCycles: cycles,
+	}
+}
+
+// mergeIDUNATokens combines local file-based token estimates with IDUNA-sourced Emily Prime data.
+func mergeIDUNATokens(base, idunaPrime tokenEstimate) tokenEstimate {
+	base.EmilyPrimeTodayK = idunaPrime.EmilyPrimeTodayK
+	base.EmilyPrimeCycles = idunaPrime.EmilyPrimeCycles
+	return base
+}
+
 func collectFatBabySummary(cfg *config.Config) fatBabySummary {
 	s := fatBabySummary{}
 	s.Processes = collectFatBabyProcesses(cfg)
@@ -1028,16 +1086,24 @@ func renderRepoPanel(tv *tview.TextView, s *tuiState) {
 	}
 
 	sb.WriteString("\n[white::b]TOKEN BUDGET[-]\n")
-	if s.tokenEst.RunsToday == 0 {
+	if s.tokenEst.RunsToday == 0 && s.tokenEst.EmilyPrimeCycles == 0 {
 		sb.WriteString("  [darkgray]no runs today[-]\n")
 	} else {
-		qualifier := "[darkgray](est.)[-]"
-		if s.tokenEst.HasActual {
-			qualifier = "[green](actual)[-]"
+		if s.tokenEst.RunsToday > 0 {
+			qualifier := "[darkgray](est.)[-]"
+			if s.tokenEst.HasActual {
+				qualifier = "[green](actual)[-]"
+			}
+			sb.WriteString(fmt.Sprintf("  claude-code:  [cyan]%d runs, %.0fk tokens[-] %s\n",
+				s.tokenEst.RunsToday, s.tokenEst.TodayK, qualifier))
+			sb.WriteString(fmt.Sprintf("  last run:     [darkgray]%.1fk[-]\n", s.tokenEst.LastRunK))
 		}
-		sb.WriteString(fmt.Sprintf("  runs today:  [cyan]%d[-]\n", s.tokenEst.RunsToday))
-		sb.WriteString(fmt.Sprintf("  tokens today: [cyan]%.0fk[-] %s\n", s.tokenEst.TodayK, qualifier))
-		sb.WriteString(fmt.Sprintf("  last run:    [darkgray]%.1fk[-]\n", s.tokenEst.LastRunK))
+		if s.tokenEst.EmilyPrimeCycles > 0 {
+			sb.WriteString(fmt.Sprintf("  emily-prime:  [cyan]%d cycles, %.0fk tokens[-] [green](IDUNA)[-]\n",
+				s.tokenEst.EmilyPrimeCycles, s.tokenEst.EmilyPrimeTodayK))
+		} else if s.tokenEst.RunsToday == 0 {
+			sb.WriteString("  [darkgray]no runs today[-]\n")
+		}
 	}
 
 	tv.SetText(sb.String())

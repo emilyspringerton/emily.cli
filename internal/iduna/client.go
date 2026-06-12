@@ -50,14 +50,15 @@ type ApplePayload struct {
 
 // Apple is one record from GET /api/v1/apples.
 type Apple struct {
-	ID         int64  `json:"id"`
-	AgentID    string `json:"agent_id"`
-	SourceRepo string `json:"source_repo"`
-	RunID      string `json:"run_id"`
-	AppleType  string `json:"apple_type"`
-	Title      string `json:"title"`
-	Body       string `json:"body,omitempty"`
-	RecordedAt string `json:"recorded_at"`
+	ID         int64           `json:"id"`
+	AgentID    string          `json:"agent_id"`
+	SourceRepo string          `json:"source_repo"`
+	RunID      string          `json:"run_id"`
+	AppleType  string          `json:"apple_type"`
+	Title      string          `json:"title"`
+	Body       string          `json:"body,omitempty"`
+	Metadata   json.RawMessage `json:"metadata,omitempty"`
+	RecordedAt string          `json:"recorded_at"`
 }
 
 // AppleListFilters controls what GET /api/v1/apples returns.
