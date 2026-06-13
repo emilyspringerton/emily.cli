@@ -46,8 +46,12 @@ func RunBacklog(args []string) int {
 		return runBacklogCompress(args[1:])
 	case "done":
 		return runBacklogDone(args[1:])
+	case "add":
+		return runBacklogAdd(args[1:])
+	case "add-section":
+		return runBacklogAddSection(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "emily backlog: unknown subcommand %q — try: curate, promote, archive, compress, done\n", args[0])
+	fmt.Fprintf(os.Stderr, "emily backlog: unknown subcommand %q — try: curate, promote, archive, compress, done, add, add-section\n", args[0])
 	return 1
 }
 
@@ -527,6 +531,212 @@ func runBacklogDone(args []string) int {
 			AppleType:  "completion",
 			Title:      fmt.Sprintf("backlog done: %s", truncate(match, 70)),
 			Body:       fmt.Sprintf("Marked done in BACKLOG.md. Match: %q. Apple: #%d.", match, *appleID),
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  apple post: %v (continuing)\n", err)
+		} else {
+			fmt.Printf("  ✓ Apple #%d filed\n", id)
+		}
+	}
+
+	return 0
+}
+
+// runBacklogAdd appends a new open item to a named section of BACKLOG.md.
+// Usage: emily backlog add [--section N] [--no-commit] [--no-apple] "<item text>"
+func runBacklogAdd(args []string) int {
+	fs := flag.NewFlagSet("backlog add", flag.ContinueOnError)
+	section := fs.Int("section", 0, "section number to append to (0 = INTAKE QUEUE)")
+	noCommit := fs.Bool("no-commit", false, "write BACKLOG.md but skip git commit")
+	noApple := fs.Bool("no-apple", false, "skip IDUNA Apple receipt")
+
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if len(fs.Args()) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: emily backlog add [--section N] [--no-commit] [--no-apple] \"<item text>\"")
+		return 1
+	}
+	item := strings.Join(fs.Args(), " ")
+
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+	backlogPath := filepath.Join(cfg.EmilyRoot, "BACKLOG.md")
+
+	data, err := os.ReadFile(backlogPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read backlog: %v\n", err)
+		return 1
+	}
+
+	line := fmt.Sprintf("- [ ] **%s**", sanitizeBacklogLine(item))
+	content := string(data)
+
+	if *section == 0 {
+		// Append to INTAKE QUEUE section (or create it).
+		results := []curatedResult{{
+			FileKey:     fmt.Sprintf("manual-%d", time.Now().Unix()),
+			Timestamp:   time.Now().UTC().Format(time.RFC3339),
+			Summary:     item,
+			BacklogLine: line,
+		}}
+		if err := appendToBacklog(backlogPath, results); err != nil {
+			fmt.Fprintf(os.Stderr, "write backlog: %v\n", err)
+			return 1
+		}
+	} else {
+		// Find the numbered section header: "## SECTION N:" or "## SECTION N "
+		marker := fmt.Sprintf("## SECTION %d", *section)
+		idx := strings.Index(content, marker)
+		if idx < 0 {
+			fmt.Fprintf(os.Stderr, "backlog add: section %d not found in BACKLOG.md\n", *section)
+			return 1
+		}
+		// Find the insert point: just before the next "## " heading or EOF.
+		searchFrom := idx + len(marker)
+		insertPos := len(content)
+		if next := strings.Index(content[searchFrom:], "\n## "); next >= 0 {
+			insertPos = searchFrom + next + 1
+		}
+		// Walk back past trailing blank lines.
+		for insertPos > 0 && content[insertPos-1] == '\n' {
+			insertPos--
+		}
+		content = content[:insertPos] + "\n" + line + "\n" + content[insertPos:]
+		if err := os.WriteFile(backlogPath, []byte(content), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "write backlog: %v\n", err)
+			return 1
+		}
+	}
+
+	fmt.Printf("  ✓ added: %s\n", truncate(item, 80))
+
+	if !*noCommit {
+		msg := fmt.Sprintf("backlog: add item — %s", truncate(item, 60))
+		if err := gitCommitBacklog(cfg.EmilyRoot, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "git commit: %v\n", err)
+			return 1
+		}
+		fmt.Println("  ✓ committed BACKLOG.md")
+	}
+
+	if !*noApple && cfg.IDUNAAgentSecret != "" {
+		client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
+		id, err := client.PostApple(iduna.ApplePayload{
+			SourceRepo: "emily.cli",
+			RunID:      fmt.Sprintf("backlog-add-%d", time.Now().Unix()),
+			AppleType:  "observation",
+			Title:      fmt.Sprintf("backlog add (section %d): %s", *section, truncate(item, 60)),
+			Body:       fmt.Sprintf("Added item to BACKLOG.md section %d.\nItem: %s", *section, item),
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  apple post: %v (continuing)\n", err)
+		} else {
+			fmt.Printf("  ✓ Apple #%d filed\n", id)
+		}
+	}
+
+	return 0
+}
+
+// runBacklogAddSection appends a new numbered section to BACKLOG.md.
+// Usage: emily backlog add-section [--title "<title>"] [--no-commit] [--no-apple]
+func runBacklogAddSection(args []string) int {
+	fs := flag.NewFlagSet("backlog add-section", flag.ContinueOnError)
+	title := fs.String("title", "", "section title (required)")
+	noCommit := fs.Bool("no-commit", false, "write BACKLOG.md but skip git commit")
+	noApple := fs.Bool("no-apple", false, "skip IDUNA Apple receipt")
+
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *title == "" {
+		if len(fs.Args()) > 0 {
+			*title = strings.Join(fs.Args(), " ")
+		} else {
+			fmt.Fprintln(os.Stderr, "usage: emily backlog add-section --title \"<title>\"")
+			return 1
+		}
+	}
+
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+	backlogPath := filepath.Join(cfg.EmilyRoot, "BACKLOG.md")
+
+	data, err := os.ReadFile(backlogPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read backlog: %v\n", err)
+		return 1
+	}
+	content := string(data)
+
+	// Find the highest existing SECTION number.
+	highest := 0
+	for _, l := range strings.Split(content, "\n") {
+		if !strings.HasPrefix(l, "## SECTION ") {
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(l, "## SECTION %d", &n); err == nil && n > highest {
+			highest = n
+		}
+	}
+	next := highest + 1
+
+	newSection := fmt.Sprintf("\n---\n\n## SECTION %d: %s\n\n", next, *title)
+
+	// Insert before BACKLOG PROTOCOL or priority order line if present, else append.
+	insertLines := strings.Split(content, "\n")
+	insertAt := -1
+	for i, l := range insertLines {
+		if strings.HasPrefix(l, "## BACKLOG PROTOCOL") || strings.HasPrefix(l, "Priority section order:") {
+			insertAt = i
+			for insertAt > 0 && strings.TrimSpace(insertLines[insertAt-1]) == "" {
+				insertAt--
+			}
+			break
+		}
+	}
+
+	var newContent string
+	if insertAt >= 0 {
+		before := strings.Join(insertLines[:insertAt], "\n")
+		after := strings.Join(insertLines[insertAt:], "\n")
+		newContent = before + "\n" + newSection + after
+	} else {
+		newContent = content + newSection
+	}
+
+	if err := os.WriteFile(backlogPath, []byte(newContent), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "write backlog: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("  ✓ added: ## SECTION %d: %s\n", next, *title)
+
+	if !*noCommit {
+		msg := fmt.Sprintf("backlog: add section %d — %s", next, truncate(*title, 60))
+		if err := gitCommitBacklog(cfg.EmilyRoot, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "git commit: %v\n", err)
+			return 1
+		}
+		fmt.Println("  ✓ committed BACKLOG.md")
+	}
+
+	if !*noApple && cfg.IDUNAAgentSecret != "" {
+		client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
+		id, err := client.PostApple(iduna.ApplePayload{
+			SourceRepo: "emily.cli",
+			RunID:      fmt.Sprintf("backlog-add-section-%d", time.Now().Unix()),
+			AppleType:  "observation",
+			Title:      fmt.Sprintf("backlog add-section %d: %s", next, truncate(*title, 60)),
+			Body:       fmt.Sprintf("Added SECTION %d: %s to BACKLOG.md.", next, *title),
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  apple post: %v (continuing)\n", err)
