@@ -40,11 +40,76 @@ func RunTrain(args []string) int {
 		return runTrainStatus(rest)
 	case "stats":
 		return runTrainStats(rest)
+	case "run-local":
+		return runTrainLocal(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily train: unknown subcommand %q\n", sub)
 		printTrainUsage()
 		return 1
 	}
+}
+
+func runTrainLocal(args []string) int {
+	fs := flag.NewFlagSet("train run-local", flag.ContinueOnError)
+	corpus := fs.String("corpus", "/tmp/emily-corpus.jsonl", "JSONL corpus path")
+	outputDir := fs.String("output-dir", "", "HuggingFace checkpoint dir (default: gpt2-alpine-c/checkpoint-emily-ft)")
+	binaryOutput := fs.String("binary-output", "", "C binary output (default: gpt2-alpine-c/weights/emily-ft.bin)")
+	steps := fs.Int("steps", 500, "training steps (use 50 for a quick smoke test)")
+	maxLength := fs.Int("max-length", 128, "max token sequence length")
+	loraR := fs.Int("lora-r", 8, "LoRA rank")
+	lr := fs.Float64("lr", 3e-4, "learning rate")
+	gradAccum := fs.Int("grad-accum", 8, "gradient accumulation steps")
+	maxRecords := fs.Int("max-records", 3000, "max corpus records to load (0=all)")
+	noConvert := fs.Bool("no-convert", false, "skip C binary conversion after training")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+
+	gpt2Root := filepath.Join(filepath.Dir(cfg.EmilyRoot), "gpt2-alpine-c")
+	scriptPath := filepath.Join(gpt2Root, "scripts", "train_local.py")
+	if _, err := os.Stat(scriptPath); err != nil {
+		fmt.Fprintf(os.Stderr, "error: train_local.py not found: %s\n", scriptPath)
+		return 1
+	}
+
+	cmdArgs := []string{
+		scriptPath,
+		"--corpus", *corpus,
+		"--steps", fmt.Sprintf("%d", *steps),
+		"--max-length", fmt.Sprintf("%d", *maxLength),
+		"--lora-r", fmt.Sprintf("%d", *loraR),
+		"--lr", fmt.Sprintf("%g", *lr),
+		"--grad-accum", fmt.Sprintf("%d", *gradAccum),
+		"--max-records", fmt.Sprintf("%d", *maxRecords),
+	}
+	if *outputDir != "" {
+		cmdArgs = append(cmdArgs, "--output-dir", *outputDir)
+	}
+	if *binaryOutput != "" {
+		cmdArgs = append(cmdArgs, "--binary-output", *binaryOutput)
+	}
+	if *noConvert {
+		cmdArgs = append(cmdArgs, "--no-convert")
+	}
+
+	fmt.Printf("◈ Emily Local Training\n")
+	fmt.Printf("  Script: %s\n", scriptPath)
+	fmt.Printf("  Steps:  %d\n\n", *steps)
+
+	cmd := exec.Command("python3", cmdArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "train-local failed: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func printTrainUsage() {
@@ -55,14 +120,31 @@ Subcommands:
   upload <file>   Upload training artifact to Drive via IDUNA
   status          Show Drive files + training pipeline state
   stats           Show corpus quality stats (token count, source breakdown, Colab estimate)
+  run-local       Fine-tune GPT-2 locally via LoRA (CPU, ≤1 GB RAM, no GPU needed)
 
 Flags for build-dataset:
   --emily-root <path>   Path to EMILY repo (default: auto-discover)
   --output <path>       Output JSONL file (default: /tmp/emily-corpus.jsonl)
   --mode lm|instruct    Training mode (default: lm)
   --gpt2-root <path>    Path to gpt2-alpine-c repo (for script location)
+  --colab               Colab-safe preset: Emily ops text only, deduped, ≤1500 records (DEFAULT)
+  --no-colab            Full corpus: includes SEC, press releases, TYLER (~7K records, ~30 min T4)
+  --max-records <n>     Cap output via stratified sampling (0=unlimited; overrides colab default)
   --apples-dir <path>   Path to APPLES git repo (auto-discover sibling of emily-root)
-  --max-apples <n>      Max Apple records to include (default: 500, 0=unlimited)
+  --max-apples <n>      Max Apple records to include (default: 500; colab: 200)
+  --fatbaby-root <path> Explicit path to PRRJECT_FATBABY (SEC + press releases; not auto-discovered)
+  --max-sec-docs <n>    Max SEC filing docs (default: 2000; only used with --fatbaby-root)
+  --max-pr-docs <n>     Max press release docs (default: 1000; only used with --fatbaby-root)
+  --tyler-root <path>   Explicit path to TYLER repo (not auto-discovered)
+
+Flags for run-local:
+  --corpus <path>       JSONL corpus (default: /tmp/emily-corpus.jsonl)
+  --steps <n>           Training steps (default: 500; use 50 for smoke test)
+  --max-length <n>      Token sequence length (default: 128)
+  --lora-r <n>          LoRA rank (default: 8)
+  --grad-accum <n>      Gradient accumulation (default: 8; effective batch=8)
+  --max-records <n>     Max corpus records (default: 3000; 0=all)
+  --no-convert          Skip C binary conversion
 
 Environment:
   IDUNA_BASE_URL, IDUNA_AGENT_NAME (EMILY-TRAINING), IDUNA_AGENT_SECRET`)
@@ -76,9 +158,19 @@ func runTrainBuildDataset(args []string) int {
 	gpt2Root := fs.String("gpt2-root", "", "path to gpt2-alpine-c repo")
 	applesDir := fs.String("apples-dir", "", "path to APPLES git repo (auto-discover if empty)")
 	maxApples := fs.Int("max-apples", 500, "max Apple records to include (0=unlimited)")
+	fatbabyRoot := fs.String("fatbaby-root", "", "path to PRRJECT_FATBABY repo (explicit; not auto-discovered)")
+	maxSecDocs := fs.Int("max-sec-docs", 2000, "max SEC filing docs to include (0=unlimited)")
+	maxPRDocs := fs.Int("max-pr-docs", 1000, "max press release docs to include (0=unlimited)")
+	tylerRoot := fs.String("tyler-root", "", "path to TYLER repo (explicit; not auto-discovered)")
+	colab := fs.Bool("colab", true, "Colab-safe preset: Emily operational text only, deduped, max 1500 records (default: true)")
+	noColab := fs.Bool("no-colab", false, "disable colab preset (include SEC, press releases, TYLER)")
+	maxRecords := fs.Int("max-records", 0, "cap total records via stratified sampling (0=unlimited; overrides colab default)")
 	verbose := fs.Bool("v", false, "verbose output")
 	if err := fs.Parse(args); err != nil {
 		return 1
+	}
+	if *noColab {
+		*colab = false
 	}
 
 	cfg, err := config.Resolve()
@@ -120,17 +212,36 @@ func runTrainBuildDataset(args []string) int {
 		"--output", *output,
 		"--mode", *mode,
 	}
+	if *colab {
+		cmdArgs = append(cmdArgs, "--colab")
+	}
+	if *maxRecords > 0 {
+		cmdArgs = append(cmdArgs, "--max-records", fmt.Sprintf("%d", *maxRecords))
+	}
 	if *applesDir != "" {
 		cmdArgs = append(cmdArgs, "--apples-dir", *applesDir, "--max-apples", fmt.Sprintf("%d", *maxApples))
+	}
+	if *fatbabyRoot != "" {
+		cmdArgs = append(cmdArgs, "--fatbaby-root", *fatbabyRoot,
+			"--max-sec-docs", fmt.Sprintf("%d", *maxSecDocs),
+			"--max-pr-docs", fmt.Sprintf("%d", *maxPRDocs))
+	}
+	if *tylerRoot != "" {
+		cmdArgs = append(cmdArgs, "--tyler-root", *tylerRoot)
 	}
 	if *verbose {
 		cmdArgs = append(cmdArgs, "--verbose")
 	}
 
+	preset := "colab (Emily operational only, deduped)"
+	if !*colab {
+		preset = "full (SEC + press releases + TYLER included)"
+	}
 	fmt.Printf("◈ Building training corpus\n")
 	fmt.Printf("  Emily root: %s\n", *emilyRoot)
 	fmt.Printf("  Output:     %s\n", *output)
 	fmt.Printf("  Mode:       %s\n", *mode)
+	fmt.Printf("  Preset:     %s\n", preset)
 	if *applesDir != "" {
 		fmt.Printf("  Apples:     %s (max %d)\n", *applesDir, *maxApples)
 	}
