@@ -58,6 +58,8 @@ Flags for build-dataset:
   --output <path>       Output JSONL file (default: /tmp/emily-corpus.jsonl)
   --mode lm|instruct    Training mode (default: lm)
   --gpt2-root <path>    Path to gpt2-alpine-c repo (for script location)
+  --apples-dir <path>   Path to APPLES git repo (auto-discover sibling of emily-root)
+  --max-apples <n>      Max Apple records to include (default: 500, 0=unlimited)
 
 Environment:
   IDUNA_BASE_URL, IDUNA_AGENT_NAME (EMILY-TRAINING), IDUNA_AGENT_SECRET`)
@@ -69,6 +71,8 @@ func runTrainBuildDataset(args []string) int {
 	output := fs.String("output", "/tmp/emily-corpus.jsonl", "output JSONL path")
 	mode := fs.String("mode", "lm", "training mode: lm or instruct")
 	gpt2Root := fs.String("gpt2-root", "", "path to gpt2-alpine-c repo")
+	applesDir := fs.String("apples-dir", "", "path to APPLES git repo (auto-discover if empty)")
+	maxApples := fs.Int("max-apples", 500, "max Apple records to include (0=unlimited)")
 	verbose := fs.Bool("v", false, "verbose output")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -92,6 +96,14 @@ func runTrainBuildDataset(args []string) int {
 		*gpt2Root = filepath.Join(filepath.Dir(*emilyRoot), "gpt2-alpine-c")
 	}
 
+	// Auto-discover APPLES as sibling of EMILY root
+	if *applesDir == "" {
+		candidate := filepath.Join(filepath.Dir(*emilyRoot), "APPLES")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			*applesDir = candidate
+		}
+	}
+
 	scriptPath := filepath.Join(*gpt2Root, "scripts", "prime_directive_dataset.py")
 	if _, err := os.Stat(scriptPath); err != nil {
 		fmt.Fprintf(os.Stderr, "error: script not found: %s\n", scriptPath)
@@ -105,6 +117,9 @@ func runTrainBuildDataset(args []string) int {
 		"--output", *output,
 		"--mode", *mode,
 	}
+	if *applesDir != "" {
+		cmdArgs = append(cmdArgs, "--apples-dir", *applesDir, "--max-apples", fmt.Sprintf("%d", *maxApples))
+	}
 	if *verbose {
 		cmdArgs = append(cmdArgs, "--verbose")
 	}
@@ -112,7 +127,11 @@ func runTrainBuildDataset(args []string) int {
 	fmt.Printf("◈ Building training corpus\n")
 	fmt.Printf("  Emily root: %s\n", *emilyRoot)
 	fmt.Printf("  Output:     %s\n", *output)
-	fmt.Printf("  Mode:       %s\n\n", *mode)
+	fmt.Printf("  Mode:       %s\n", *mode)
+	if *applesDir != "" {
+		fmt.Printf("  Apples:     %s (max %d)\n", *applesDir, *maxApples)
+	}
+	fmt.Println()
 
 	cmd := exec.Command("python3", cmdArgs...)
 	cmd.Stdout = os.Stdout
