@@ -1,22 +1,25 @@
-// cmd/tui.go — emily tui
-// Bloomberg-style terminal dashboard for the Einhorn Industrial agent stack.
+// cmd/tui.go — emily tui (pure stdlib, zero external dependencies)
+// Bloomberg-style terminal dashboard using ANSI escape codes.
 //
-// Layout (five-row grid):
-//   Row 0: Header  — system name, timestamp, process indicators         (3 lines)
-//   Row 1: Main    — repos+tasks | apple feed | process health          (flexible)
-//   Row 2: Log     — RSI activity log, streams hotkey command output    (9 lines)
-//   Row 3: CmdBar  — operator command input bar                         (1 line)
-//   Row 4: Footer  — version + key hints                                (1 line)
+// Layout:
+//   Row 0: Header  — system name, timestamp, indicators        (2 lines)
+//   Row 1: Main    — repos+tasks | apple feed | health/fatbaby (flexible)
+//   Row 2: Log     — RSI activity log                          (9 lines)
+//   Row 3: CmdBar  — operator command input                    (1 line)
+//   Row 4: Footer  — version + key hints                       (1 line)
 //
 // Hotkeys:
-//   F1 — full RSI tic-toc cycle (TIC→TOCK→ENTROPY→ANALYZE), streams to log
-//   F2 — run Tyler emily.sh 2 iterations, streams to log
-//   F3 — emily start, streams to log
-//   F4 — tail rsi-loop.log in suspended terminal
-//   F5 — fire 1 rsi-loop.sh iteration in background, streams to log
-//   :  — focus command input bar (pt, eo, tyler [N], start, refresh)
+//   F1 — full RSI tic-toc cycle (TIC→TOCK→ENTROPY→ANALYZE)
+//   F2 — Tyler emily.sh 2 iterations
+//   F3 — emily start
+//   F4 — tail rsi-loop.log (suspends TUI)
+//   F5 — fire 1 rsi-loop.sh iteration
+//   :  — focus command input bar
 //   r  — force refresh all panels
 //   q  — quit
+//   t  — toggle col2 (apple feed / obs tail)
+//   b  — toggle col3 (system health / fatbaby signals)
+//   h  — help
 
 package cmd
 
@@ -33,73 +36,247 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
+	"unsafe"
 
 	"github.com/emilyspringerton/emily-cli/internal/config"
 	"github.com/emilyspringerton/emily-cli/internal/iduna"
 )
 
-// tuiLogger appends timestamped, color-tagged lines to a tview.TextView.
-// All methods are goroutine-safe.
+// ── ANSI helpers ──────────────────────────────────────────────────────────────
+
+const (
+	ansiReset    = "\033[0m"
+	ansiBold     = "\033[1m"
+	ansiRed      = "\033[31m"
+	ansiGreen    = "\033[32m"
+	ansiYellow   = "\033[33m"
+	ansiCyan     = "\033[36m"
+	ansiMagenta  = "\033[35m"
+	ansiBlue     = "\033[34m"
+	ansiWhite    = "\033[97m"
+	ansiDarkGray = "\033[90m"
+
+	ansiHideCursor = "\033[?25l"
+	ansiShowCursor = "\033[?25h"
+	ansiAltScreen  = "\033[?1049h"
+	ansiNormScreen = "\033[?1049l"
+	ansiClearFull  = "\033[2J\033[H"
+)
+
+func ac(color, s string) string { return color + s + ansiReset }
+
+// ansiVLen returns visible character count, skipping ANSI escape sequences.
+func ansiVLen(s string) int {
+	n := 0
+	inEsc := false
+	for _, c := range s {
+		switch {
+		case c == '\033':
+			inEsc = true
+		case inEsc && c == 'm':
+			inEsc = false
+		case !inEsc:
+			n++
+		}
+	}
+	return n
+}
+
+// ansiTruncPad truncates s to `width` visible chars and pads with spaces.
+func ansiTruncPad(s string, width int) string {
+	var b strings.Builder
+	vis := 0
+	inEsc := false
+	for _, c := range s {
+		if c == '\033' {
+			inEsc = true
+			b.WriteRune(c)
+		} else if inEsc {
+			b.WriteRune(c)
+			if c == 'm' {
+				inEsc = false
+			}
+		} else if vis < width {
+			b.WriteRune(c)
+			vis++
+		}
+	}
+	b.WriteString(ansiReset)
+	if vis < width {
+		b.WriteString(strings.Repeat(" ", width-vis))
+	}
+	return b.String()
+}
+
+// ── Terminal control ──────────────────────────────────────────────────────────
+
+func termSetRaw() {
+	cmd := exec.Command("stty", "raw", "-echo")
+	cmd.Stdin = os.Stdin
+	cmd.Run()
+}
+
+func termRestore() {
+	cmd := exec.Command("stty", "sane")
+	cmd.Stdin = os.Stdin
+	cmd.Run()
+}
+
+type winsize struct{ Row, Col, Xpixel, Ypixel uint16 }
+
+func termSize() (cols, rows int) {
+	var ws winsize
+	syscall.Syscall(syscall.SYS_IOCTL,
+		uintptr(os.Stdout.Fd()),
+		syscall.TIOCGWINSZ,
+		uintptr(unsafe.Pointer(&ws)))
+	if ws.Col == 0 || ws.Row == 0 {
+		return 80, 24
+	}
+	return int(ws.Col), int(ws.Row)
+}
+
+// ── Key input ─────────────────────────────────────────────────────────────────
+
+type keyCode int
+
+const (
+	keyNone keyCode = iota
+	keyF1
+	keyF2
+	keyF3
+	keyF4
+	keyF5
+	keyEnter
+	keyEscape
+	keyBackspace
+	keyRune
+)
+
+type keyEvent struct {
+	code keyCode
+	ch   rune
+}
+
+// readKeys reads raw key events from r and sends them to ch.
+func readKeys(r *bufio.Reader, ch chan<- keyEvent) {
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			close(ch)
+			return
+		}
+		if b != '\x1b' {
+			switch {
+			case b == '\r' || b == '\n':
+				ch <- keyEvent{code: keyEnter}
+			case b == 127 || b == 8:
+				ch <- keyEvent{code: keyBackspace}
+			case b >= 32:
+				ch <- keyEvent{code: keyRune, ch: rune(b)}
+			}
+			continue
+		}
+		// ESC — peek for sequences
+		next, err := r.ReadByte()
+		if err != nil {
+			ch <- keyEvent{code: keyEscape}
+			return
+		}
+		if next != '[' && next != 'O' {
+			ch <- keyEvent{code: keyEscape}
+			r.UnreadByte()
+			continue
+		}
+		if next == 'O' {
+			// VT100 F-keys: ESC O P/Q/R/S
+			third, _ := r.ReadByte()
+			switch third {
+			case 'P':
+				ch <- keyEvent{code: keyF1}
+			case 'Q':
+				ch <- keyEvent{code: keyF2}
+			case 'R':
+				ch <- keyEvent{code: keyF3}
+			case 'S':
+				ch <- keyEvent{code: keyF4}
+			}
+			continue
+		}
+		// CSI: ESC [ ...
+		var seq []byte
+		for {
+			c, e := r.ReadByte()
+			if e != nil {
+				break
+			}
+			seq = append(seq, c)
+			if c >= 0x40 && c <= 0x7E {
+				break
+			}
+		}
+		switch string(seq) {
+		case "11~":
+			ch <- keyEvent{code: keyF1}
+		case "12~":
+			ch <- keyEvent{code: keyF2}
+		case "13~":
+			ch <- keyEvent{code: keyF3}
+		case "14~":
+			ch <- keyEvent{code: keyF4}
+		case "15~":
+			ch <- keyEvent{code: keyF5}
+		}
+	}
+}
+
+// ── Logger ────────────────────────────────────────────────────────────────────
+
 type tuiLogger struct {
 	mu       sync.Mutex
 	lines    []string
 	maxLines int
-	tv       *tview.TextView
-	app      *tview.Application
-	stopped  bool // set before app.Stop() to prevent post-stop QueueUpdateDraw races
+	notify   func()
 }
 
-func newTUILogger(tv *tview.TextView, app *tview.Application) *tuiLogger {
-	return &tuiLogger{tv: tv, app: app, maxLines: 500}
+func newTUILogger(notify func()) *tuiLogger {
+	return &tuiLogger{maxLines: 500, notify: notify}
 }
 
-// setStopped signals all log/draw calls to become no-ops.
-// Call before app.Stop() to prevent the deadlock where goroutines call
-// QueueUpdateDraw on an already-stopped application.
-func (l *tuiLogger) setStopped() {
-	l.mu.Lock()
-	l.stopped = true
-	l.mu.Unlock()
-}
-
-func (l *tuiLogger) isStopped() bool {
-	l.mu.Lock()
-	v := l.stopped
-	l.mu.Unlock()
-	return v
-}
-
-// log appends one line. phaseTag is the label shown in brackets (e.g. "TIC", "TOCK").
-// color is a tview color tag prefix (e.g. "[yellow]", "[cyan]").
 func (l *tuiLogger) log(color, phaseTag, msg string) {
 	ts := time.Now().Format("15:04:05")
-	line := fmt.Sprintf("[darkgray]%s[-] %s[%-4s][-] %s", ts, color, phaseTag, msg)
+	line := fmt.Sprintf("%s%s%s %s[%-4s]%s %s",
+		ansiDarkGray, ts, ansiReset,
+		color, phaseTag, ansiReset,
+		msg)
 	l.mu.Lock()
 	l.lines = append(l.lines, line)
 	if len(l.lines) > l.maxLines {
 		l.lines = l.lines[len(l.lines)-l.maxLines:]
 	}
-	joined := strings.Join(l.lines, "\n")
-	stopped := l.stopped
 	l.mu.Unlock()
-	if stopped {
-		return
+	if l.notify != nil {
+		l.notify()
 	}
-	l.app.QueueUpdateDraw(func() {
-		l.tv.SetText(joined)
-		l.tv.ScrollToEnd()
-	})
 }
 
 func (l *tuiLogger) logf(color, phase, format string, args ...interface{}) {
 	l.log(color, phase, fmt.Sprintf(format, args...))
 }
 
-// streamCmd runs a command and writes each stdout/stderr line to the logger.
-// Returns the exit error (nil on success).
+func (l *tuiLogger) tail(n int) []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.lines) <= n {
+		cp := make([]string, len(l.lines))
+		copy(cp, l.lines)
+		return cp
+	}
+	cp := make([]string, n)
+	copy(cp, l.lines[len(l.lines)-n:])
+	return cp
+}
+
 func (l *tuiLogger) streamCmd(color, phase string, cmd *exec.Cmd) error {
 	pr, pw, err := os.Pipe()
 	if err != nil {
@@ -107,18 +284,15 @@ func (l *tuiLogger) streamCmd(color, phase string, cmd *exec.Cmd) error {
 	}
 	cmd.Stdout = pw
 	cmd.Stderr = pw
-
 	if err := cmd.Start(); err != nil {
 		pw.Close()
 		pr.Close()
 		return err
 	}
 	pw.Close()
-
-	scanner := bufio.NewScanner(pr)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line != "" {
+	sc := bufio.NewScanner(pr)
+	for sc.Scan() {
+		if line := sc.Text(); line != "" {
 			l.log(color, phase, line)
 		}
 	}
@@ -126,7 +300,8 @@ func (l *tuiLogger) streamCmd(color, phase string, cmd *exec.Cmd) error {
 	return cmd.Wait()
 }
 
-// tuiState holds all data rendered by the dashboard panels.
+// ── TUI state types ───────────────────────────────────────────────────────────
+
 type tuiState struct {
 	repos          []repoStatus
 	apples         []iduna.Apple
@@ -136,7 +311,7 @@ type tuiState struct {
 	rsiLoop        rsiLoopState
 	tokenEst       tokenEstimate
 	iduna          bool
-	fatbabyMode    bool // --fatbaby flag: right panel shows FatBaby data
+	fatbabyMode    bool
 	refreshedAt    time.Time
 }
 
@@ -144,17 +319,17 @@ type fatBabySummary struct {
 	Processes    []processState
 	NodeCount    int
 	SignalCount  int
-	RecentSignal string // last signal type + ticker
+	RecentSignal string
 	EpsCount     int
 }
 
 type signalRecord struct {
-	Type      string  `json:"type"`
-	Ticker    string  `json:"ticker"`
-	Entity    string  `json:"entity"`
-	Severity  string  `json:"severity"`
-	Score     float64 `json:"score"`
-	FilingDate string `json:"filing_date"`
+	Type       string  `json:"type"`
+	Ticker     string  `json:"ticker"`
+	Entity     string  `json:"entity"`
+	Severity   string  `json:"severity"`
+	Score      float64 `json:"score"`
+	FilingDate string  `json:"filing_date"`
 }
 
 type tuiTaskState struct {
@@ -172,50 +347,30 @@ type rsiLoopState struct {
 }
 
 type tokenEstimate struct {
-	TodayK    float64
-	LastRunK  float64
-	RunsToday int
-	HasActual bool // true when at least one run report contains tokens_used
-
-	// Emily Prime cron cycle tokens sourced from IDUNA Apple metadata.
+	TodayK           float64
+	LastRunK         float64
+	RunsToday        int
+	HasActual        bool
 	EmilyPrimeTodayK float64
 	EmilyPrimeCycles int
 }
 
 const tuiPIDFile = "/tmp/emily-tui.pid"
 
-// evictStaleTUI kills any previous emily tui instance recorded in the PID
-// file, then resets the terminal. tview switches to the alternate screen
-// buffer and raw mode; if killed with Ctrl-C these are never restored.
-// We send the escape sequences directly to /dev/tty (reliable even when
-// stdout is in a broken state) before handing the terminal to tview.
+// evictStaleTUI kills any previous emily tui instance and resets the terminal.
 func evictStaleTUI() {
 	self := os.Getpid()
-
-	// Kill the old instance if the PID file exists.
 	if raw, err := os.ReadFile(tuiPIDFile); err == nil {
 		if old, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil && old != self {
 			if proc, err := os.FindProcess(old); err == nil {
 				proc.Signal(syscall.SIGTERM)
 				time.Sleep(100 * time.Millisecond)
-				proc.Signal(syscall.SIGKILL) // ensure dead
+				proc.Signal(syscall.SIGKILL)
 				fmt.Fprintf(os.Stderr, "emily tui: evicted stale pid %d\n", old)
 			}
 		}
 	}
-
-	// Write our own PID so the next launch can find us.
 	os.WriteFile(tuiPIDFile, []byte(strconv.Itoa(self)), 0o644)
-
-	// Restore terminal unconditionally — the previous session may have left
-	// it in raw mode or the alternate screen buffer regardless of whether its
-	// process is still alive.
-	//
-	// Write directly to /dev/tty so this works even if stdout is redirected
-	// or in a broken state. Sequences:
-	//   \033[?1049l — exit alternate screen buffer (tview's rmcup)
-	//   \033[?25h   — show cursor   (tview hides it on start)
-	//   \033[0m     — reset SGR attributes (colors, bold, etc.)
 	if tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {
 		tty.WriteString("\033[?1049l\033[?25h\033[0m")
 		tty.Close()
@@ -223,7 +378,8 @@ func evictStaleTUI() {
 	exec.Command("stty", "sane").Run()
 }
 
-// RunTUI launches the Bloomberg-style terminal dashboard.
+// ── RunTUI ────────────────────────────────────────────────────────────────────
+
 func RunTUI(args []string) int {
 	evictStaleTUI()
 	defer os.Remove(tuiPIDFile)
@@ -236,436 +392,555 @@ func RunTUI(args []string) int {
 		}
 	}
 
-	app := tview.NewApplication()
+	fmt.Print(ansiAltScreen)
+	fmt.Print(ansiHideCursor)
+	termSetRaw()
+	defer func() {
+		termRestore()
+		fmt.Print(ansiShowCursor)
+		fmt.Print(ansiNormScreen)
+		fmt.Print(ansiReset)
+	}()
 
-	// ── Panels ──────────────────────────────────────────────────────────────
-	header := tview.NewTextView().
-		SetDynamicColors(true).
-		SetTextAlign(tview.AlignLeft)
-
-	repoPanel := tview.NewTextView().
-		SetDynamicColors(true).
-		SetScrollable(false)
-
-	feedPanel := tview.NewTextView().
-		SetDynamicColors(true).
-		SetScrollable(true).
-		SetMaxLines(200)
-
-	healthPanel := tview.NewTextView().
-		SetDynamicColors(true).
-		SetScrollable(false)
-
-	logPanel := tview.NewTextView().
-		SetDynamicColors(true).
-		SetScrollable(true).
-		SetMaxLines(500).
-		SetWrap(true)
-
-	footer := tview.NewTextView().
-		SetDynamicColors(true).
-		SetTextAlign(tview.AlignLeft)
-
-	cmdInput := tview.NewInputField().
-		SetLabel("[darkgray]CMD:[-] ").
-		SetLabelWidth(6).
-		SetFieldBackgroundColor(tcell.ColorBlack).
-		SetFieldTextColor(tcell.ColorWhite)
-
-	for _, tv := range []*tview.TextView{repoPanel, feedPanel, healthPanel} {
-		tv.SetBorder(true)
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		tty = os.Stdin
 	}
-	logPanel.SetBorder(true)
 
-	repoPanel.SetTitle("[ REPOS + TASKS ]").SetTitleAlign(tview.AlignLeft)
-	feedPanel.SetTitle("[ APPLE FEED (live) ]").SetTitleAlign(tview.AlignLeft)
-	healthPanel.SetTitle("[ SYSTEM HEALTH ]").SetTitleAlign(tview.AlignLeft)
-	logPanel.SetTitle("[ RSI ACTIVITY LOG ]").SetTitleAlign(tview.AlignLeft)
-
-	logger := newTUILogger(logPanel, app)
-
-	// ── Layout ───────────────────────────────────────────────────────────────
-	// Rows: header(3) | main(flexible) | log(9) | cmdbar(1) | footer(1)
-	grid := tview.NewGrid().
-		SetRows(3, 0, 9, 1, 1).
-		SetColumns(34, 0, 32).
-		SetBorders(false)
-
-	grid.AddItem(header, 0, 0, 1, 3, 0, 0, false)
-	grid.AddItem(repoPanel, 1, 0, 1, 1, 0, 0, false)
-	grid.AddItem(feedPanel, 1, 1, 1, 1, 0, 0, false)
-	grid.AddItem(healthPanel, 1, 2, 1, 1, 0, 0, false)
-	grid.AddItem(logPanel, 2, 0, 1, 3, 0, 0, false)
-	grid.AddItem(cmdInput, 3, 0, 1, 3, 0, 0, false)
-	grid.AddItem(footer, 4, 0, 1, 3, 0, 0, false)
-
-	// ── State + render ───────────────────────────────────────────────────────
+	var stateMu sync.Mutex
 	var state tuiState
-	var feedHighWater int64
-	col2ShowObs := false // 't' toggles column 2 between Apple feed and obs tail
-	col3ShowFatBaby := fatbabyMode // 'b' toggles col3; starts in fatbaby mode if --fatbaby set
+	col2ShowObs := false
+	col3ShowFatBaby := fatbabyMode
+	cmdMode := false
+	var cmdBuf []rune
 
-	renderCol2 := func() {
+	drawCh := make(chan struct{}, 4)
+	requestDraw := func() {
+		select {
+		case drawCh <- struct{}{}:
+		default:
+		}
+	}
+
+	logger := newTUILogger(requestDraw)
+
+	redraw := func() {
+		stateMu.Lock()
+		s := state
+		stateMu.Unlock()
+		s.fatbabyMode = col3ShowFatBaby
+
+		cols, rows := termSize()
+		if cols < 40 {
+			cols = 40
+		}
+
+		var out strings.Builder
+		out.WriteString(ansiClearFull)
+		out.WriteString(ansiHideCursor)
+
+		// Header
+		out.WriteString(buildHeader(&s, cols))
+		out.WriteString(ac(ansiDarkGray, strings.Repeat("─", cols)) + "\n")
+
+		// Main area
+		mainRows := rows - 3 - 9 - 1 - 1 // header(2)+sep(1), log(9), cmd(1), footer(1)
+		if mainRows < 3 {
+			mainRows = 3
+		}
+		const leftW = 34
+		const rightW = 32
+		midW := cols - leftW - rightW - 4
+		if midW < 8 {
+			midW = 8
+		}
+
+		leftLines := buildRepoPanel(&s, leftW, mainRows)
+		var midLines []string
 		if col2ShowObs {
-			feedPanel.SetTitle("[ OBS TAIL (live) ]").SetTitleAlign(tview.AlignLeft)
-			renderObsTailPanel(feedPanel, cfg.FatBabyRoot)
+			midLines = buildObsPanel(cfg.FatBabyRoot, midW, mainRows)
 		} else {
-			feedPanel.SetTitle("[ APPLE FEED (live) ]").SetTitleAlign(tview.AlignLeft)
-			renderFeedPanel(feedPanel, &state)
+			midLines = buildFeedPanel(&s, midW, mainRows)
 		}
-	}
-
-	renderCol3 := func() {
+		var rightLines []string
 		if col3ShowFatBaby {
-			healthPanel.SetTitle("[ FATBABY SIGNALS ]").SetTitleAlign(tview.AlignLeft)
-			renderFatBabyPanel(healthPanel, &state)
+			rightLines = buildFatBabyPanel(&s, rightW, mainRows)
 		} else {
-			healthPanel.SetTitle("[ SYSTEM HEALTH ]").SetTitleAlign(tview.AlignLeft)
-			renderHealthPanel(healthPanel, &state)
+			rightLines = buildHealthPanel(&s, rightW, mainRows)
 		}
+
+		sep := ac(ansiDarkGray, "│")
+		for i := 0; i < mainRows; i++ {
+			l := ansiTruncPad(colLine(leftLines, i), leftW)
+			m := ansiTruncPad(colLine(midLines, i), midW)
+			r := ansiTruncPad(colLine(rightLines, i), rightW)
+			out.WriteString(l + " " + sep + " " + m + " " + sep + " " + r + "\n")
+		}
+
+		// Log panel
+		out.WriteString(ac(ansiDarkGray, "── LOG "+strings.Repeat("─", cols-7)) + "\n")
+		logLines := logger.tail(9)
+		for i := 0; i < 9; i++ {
+			out.WriteString(ansiTruncPad(colLine(logLines, i), cols) + "\n")
+		}
+
+		// Command bar
+		if cmdMode {
+			bar := ac(ansiDarkGray, "CMD: ") + ac(ansiWhite, string(cmdBuf)) + "█"
+			out.WriteString(ansiTruncPad(bar, cols) + "\n")
+		} else {
+			out.WriteString(strings.Repeat(" ", cols) + "\n")
+		}
+
+		// Footer
+		out.WriteString(buildFooter(&s, col3ShowFatBaby, cols))
+
+		fmt.Print(out.String())
 	}
 
-	refresh := func() {
-		state = collectState(cfg)
-		state.fatbabyMode = col3ShowFatBaby
-		if state.fatbabyMode {
-			state.fatbabySummary = collectFatBabySummary(cfg)
+	// Initial collection
+	func() {
+		s := collectState(cfg)
+		s.fatbabyMode = col3ShowFatBaby
+		if col3ShowFatBaby {
+			s.fatbabySummary = collectFatBabySummary(cfg)
 		}
-		for _, a := range state.apples {
-			if a.ID > feedHighWater {
-				feedHighWater = a.ID
-			}
-		}
-		if logger.isStopped() {
-			return
-		}
-		app.QueueUpdateDraw(func() {
-			renderHeader(header, &state)
-			renderRepoPanel(repoPanel, &state)
-			renderCol2()
-			renderCol3()
-			renderFooter(footer, &state)
-		})
-	}
+		stateMu.Lock()
+		state = s
+		stateMu.Unlock()
+	}()
 
-	// Initial render
-	state = collectState(cfg)
-	state.fatbabyMode = col3ShowFatBaby
-	if state.fatbabyMode {
-		state.fatbabySummary = collectFatBabySummary(cfg)
-	}
-	renderHeader(header, &state)
-	renderRepoPanel(repoPanel, &state)
-	renderCol2()
-	renderCol3()
-	renderFooter(footer, &state)
-	readyMsg := "emily tui ready — F1=RSI  F2=Tyler  F3=start  t=obs  b=fatbaby  :=cmd  r=refresh  q=quit"
+	readyMsg := "F1=RSI  F2=Tyler  F3=start  F4=logs  F5=rsi-iter  t=obs  b=fatbaby  :=cmd  r=refresh  q=quit"
 	if fatbabyMode {
-		readyMsg = "emily tui [fatbaby mode] — b=toggle health/fatbaby  t=obs  :=cmd  r=refresh  q=quit"
+		readyMsg = "[fatbaby] b=toggle  t=obs  :=cmd  r=refresh  q=quit"
 	}
-	logger.log("[darkgray]", "INFO", readyMsg)
+	logger.log(ansiDarkGray, "INFO", readyMsg)
+	redraw()
 
-	// 15s data ticker — runs collectState (git, IDUNA, processes)
-	ticker := time.NewTicker(15 * time.Second)
-	go func() {
-		for range ticker.C {
-			refresh()
-		}
-	}()
-	defer ticker.Stop()
+	ticker15s := time.NewTicker(15 * time.Second)
+	clockTick := time.NewTicker(time.Second)
+	defer ticker15s.Stop()
+	defer clockTick.Stop()
 
-	// 1s clock ticker — redraws only the header with time.Now()
-	clockTicker := time.NewTicker(time.Second)
-	go func() {
-		for range clockTicker.C {
-			if !logger.isStopped() {
-				app.QueueUpdateDraw(func() { renderHeader(header, &state) })
+	keyCh := make(chan keyEvent, 16)
+	go readKeys(bufio.NewReader(tty), keyCh)
+
+	doRefresh := func() {
+		go func() {
+			s := collectState(cfg)
+			if col3ShowFatBaby {
+				s.fatbabySummary = collectFatBabySummary(cfg)
 			}
-		}
-	}()
-	defer clockTicker.Stop()
+			stateMu.Lock()
+			state = s
+			stateMu.Unlock()
+			requestDraw()
+		}()
+	}
 
-	// ── Command input bar ────────────────────────────────────────────────────
-	// Enter dispatches the command; Escape aborts and returns focus to logPanel.
-	cmdInput.SetDoneFunc(func(key tcell.Key) {
-		text := strings.TrimSpace(cmdInput.GetText())
-		cmdInput.SetText("")
-		app.SetFocus(logPanel)
-		if key == tcell.KeyEscape || text == "" {
-			return
-		}
-		go dispatchTUICmd(text, logger, cfg, refresh)
-	})
-
-	// ── Keyboard ──────────────────────────────────────────────────────────────
-	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		switch event.Key() {
-
-		case tcell.KeyF1:
-			// Full RSI tic-toc cycle: TIC → TOCK → ENTROPY → ANALYZE
-			go func() {
-				claudeRunsDir := filepath.Join(cfg.FatBabyRoot, "claude-runs")
-
-				// ── TIC ──────────────────────────────────────────────────
-				logger.log("[yellow]", "TIC", "Dispatching RSI token-efficiency task to Emily Prime...")
-				out, err := exec.Command("emily", "prime-task", "--preset", "rsi-token-report").CombinedOutput()
-				if err != nil {
-					logger.logf("[red]", "ERR", "prime-task failed: %s", firstLine(string(out)))
-					return
-				}
-				taskID := parsePrimeTaskID(string(out))
-				logger.logf("[yellow]", "TIC", "task written: %s", taskID)
-				logger.log("[yellow]", "TIC", "obs-watcher picks up within 10s → claude --dangerously-skip-permissions")
-
-				// ── TOCK ─────────────────────────────────────────────────
-				logger.log("[cyan]", "TOCK", "Polling claude-runs/ for Claude Code completion (max 3 min)...")
-				initialLatest := latestFileInDir(claudeRunsDir)
-				waitStart := time.Now()
-				for {
-					currentLatest := latestFileInDir(claudeRunsDir)
-					if currentLatest != "" && currentLatest != initialLatest {
-						logger.logf("[cyan]", "TOCK", "Claude run detected → %s", currentLatest)
-						break
+	quit := false
+	for !quit {
+		select {
+		case ke, ok := <-keyCh:
+			if !ok {
+				quit = true
+				break
+			}
+			if cmdMode {
+				switch ke.code {
+				case keyEscape:
+					cmdMode = false
+					cmdBuf = cmdBuf[:0]
+				case keyEnter:
+					text := strings.TrimSpace(string(cmdBuf))
+					cmdMode = false
+					cmdBuf = cmdBuf[:0]
+					if text != "" {
+						go dispatchTUICmd(text, logger, cfg, func() { doRefresh() })
 					}
-					elapsed := time.Since(waitStart)
-					if elapsed > 3*time.Minute {
-						logger.log("[yellow]", "TOCK", "3 min timeout — obs-watcher may not be running (emily start to fix)")
-						break
+				case keyBackspace:
+					if len(cmdBuf) > 0 {
+						cmdBuf = cmdBuf[:len(cmdBuf)-1]
 					}
-					time.Sleep(10 * time.Second)
-					logger.logf("[darkgray]", "TOCK", "...%ds elapsed, waiting for new run file", int(elapsed.Seconds()))
+				case keyRune:
+					cmdBuf = append(cmdBuf, ke.ch)
 				}
-
-				// ── ENTROPY ──────────────────────────────────────────────
-				tylerSh := "/home/fatbaby/TYLER/emily.sh"
-				if _, serr := os.Stat(tylerSh); serr == nil {
-					pending := tylerBacklogPending()
-					if pending == 0 {
-						logger.log("[magenta]", "ENTR", "Tyler backlog empty — skipping entropy injection")
-					} else {
-						logger.logf("[magenta]", "ENTR", "Running Tyler emily.sh 2 iterations (%d tasks pending)...", pending)
-						tylerCmd := exec.Command("bash", "-c", "cd /home/fatbaby/TYLER && ./emily.sh 2 2>&1")
-						if serr := logger.streamCmd("[magenta]", "ENTR", tylerCmd); serr != nil {
-							logger.logf("[yellow]", "ENTR", "Tyler returned non-zero (%v) — continuing", serr)
-						} else {
-							logger.log("[magenta]", "ENTR", "Tyler entropy injection complete")
-						}
-					}
-				} else {
-					logger.log("[darkgray]", "ENTR", "TYLER/emily.sh not found — skipping entropy")
-				}
-
-				// ── ANALYZE ──────────────────────────────────────────────
-				logger.log("[green]", "ANLZ", "Posting RSI cycle observation to Emily OS...")
-				obsMsg := fmt.Sprintf("RSI tic-toc cycle complete — task %s dispatched, Tyler ran 2 builds", taskID)
-				obsOut, obsErr := exec.Command("emily", "observe", "-s", "info", obsMsg).CombinedOutput()
-				if obsErr != nil {
-					logger.logf("[yellow]", "ANLZ", "observe warn (IDUNA offline?): %s", firstLine(string(obsOut)))
-				} else {
-					logger.log("[green]", "ANLZ", "Observation posted → obs-watcher triggers next cycle")
-				}
-
-				logger.log("[green]", " ✓  ", "RSI tic-toc cycle complete — system advancing")
-				refresh()
-			}()
-			return nil
-
-		case tcell.KeyF2:
-			// Tyler RSI loop — stream output to log
-			go func() {
-				tylerSh := "/home/fatbaby/TYLER/emily.sh"
-				if _, err := os.Stat(tylerSh); err != nil {
-					logger.log("[red]", "ERR", "TYLER/emily.sh not found")
-					return
-				}
-				pending := tylerBacklogPending()
-				if pending == 0 {
-					logger.log("[magenta]", "ENTR", "Tyler backlog empty — nothing to build")
-					return
-				}
-				logger.logf("[magenta]", "ENTR", "Starting Tyler emily.sh 2 iterations (%d pending tasks)...", pending)
-				cmd := exec.Command("bash", "-c", "cd /home/fatbaby/TYLER && ./emily.sh 2 2>&1")
-				if err := logger.streamCmd("[magenta]", "ENTR", cmd); err != nil {
-					logger.logf("[yellow]", "ENTR", "Tyler finished with error: %v", err)
-				} else {
-					logger.log("[green]", "ENTR", "Tyler RSI loop complete")
-				}
-				refresh()
-			}()
-			return nil
-
-		case tcell.KeyF3:
-			// Start Emily OS stack — stream to log
-			go func() {
-				logger.log("[cyan]", "SYS ", "Starting Emily OS stack (obs-watcher + emily-agent)...")
-				cmd := exec.Command("emily", "start")
-				if err := logger.streamCmd("[cyan]", "SYS ", cmd); err != nil {
-					logger.logf("[yellow]", "SYS ", "emily start returned: %v", err)
-				} else {
-					logger.log("[green]", "SYS ", "Stack started — use emily status to verify")
-				}
-				refresh()
-			}()
-			return nil
-
-		case tcell.KeyF4:
-			// Tail rsi-loop.log in suspended terminal
-			go func() {
+				redraw()
+				continue
+			}
+			// Normal mode hotkeys
+			switch ke.code {
+			case keyF1:
+				go tuiF1RSI(logger, cfg, func() { doRefresh() })
+			case keyF2:
+				go tuiF2Tyler(logger, func() { doRefresh() })
+			case keyF3:
+				go tuiF3Start(logger, func() { doRefresh() })
+			case keyF4:
+				// Suspend: restore terminal, run tail, re-enter raw
 				logPath := "/home/fatbaby/EMILY/var/logs/rsi-loop.log"
-				logger.logf("[darkgray]", "LOG ", "Suspending TUI — tailing %s (Ctrl-C to return)", logPath)
-				app.Suspend(func() {
-					exec.Command("tail", "-f", logPath).Run()
-				})
-				logger.log("[darkgray]", "LOG ", "Returned from log tail")
-			}()
-			return nil
-
-		case tcell.KeyF5:
-			// Fire one RSI loop iteration in background; stream output to log.
-			go func() {
-				rsiSh := "/home/fatbaby/EMILY/scripts/rsi-loop.sh"
-				if _, err := os.Stat(rsiSh); err != nil {
-					logger.log("[red]", "ERR", "EMILY/scripts/rsi-loop.sh not found")
-					return
+				logger.logf(ansiDarkGray, "LOG ", "suspending → %s (ctrl-c to return)", logPath)
+				fmt.Print(ansiShowCursor)
+				fmt.Print(ansiNormScreen)
+				termRestore()
+				tail := exec.Command("tail", "-f", logPath)
+				tail.Stdin, tail.Stdout, tail.Stderr = os.Stdin, os.Stdout, os.Stderr
+				tail.Run()
+				fmt.Print(ansiAltScreen)
+				fmt.Print(ansiHideCursor)
+				termSetRaw()
+				logger.log(ansiDarkGray, "LOG ", "returned from tail")
+			case keyF5:
+				go tuiF5RSIIter(logger, func() { doRefresh() })
+			case keyRune:
+				switch ke.ch {
+				case ':':
+					cmdMode = true
+				case 'r', 'R':
+					logger.log(ansiDarkGray, "INFO", "refreshing...")
+					doRefresh()
+				case 'q', 'Q':
+					quit = true
+				case 't', 'T':
+					col2ShowObs = !col2ShowObs
+					if col2ShowObs {
+						logger.log(ansiDarkGray, "INFO", "col2 → OBS TAIL")
+					} else {
+						logger.log(ansiDarkGray, "INFO", "col2 → APPLE FEED")
+					}
+				case 'b', 'B':
+					col3ShowFatBaby = !col3ShowFatBaby
+					if col3ShowFatBaby {
+						logger.log(ansiDarkGray, "INFO", "col3 → FATBABY SIGNALS")
+						go func() {
+							fb := collectFatBabySummary(cfg)
+							stateMu.Lock()
+							state.fatbabySummary = fb
+							stateMu.Unlock()
+							requestDraw()
+						}()
+					} else {
+						logger.log(ansiDarkGray, "INFO", "col3 → SYSTEM HEALTH")
+					}
+				case 'h', 'H':
+					logger.log(ansiWhite, "HELP", "F1=RSI  F2=Tyler  F3=start  F4=logs  F5=rsi-iter  t=obs  b=fatbaby  :=cmd  r=refresh  q=quit")
 				}
-				logger.log("[green]", "RSI ", "Firing rsi-loop.sh (1 iteration, background)...")
-				cmd := exec.Command("bash", "-c", "cd /home/fatbaby/EMILY && MAX_ITERS=1 SKIP_WAIT=1 ./scripts/rsi-loop.sh 2>&1")
-				if err := logger.streamCmd("[green]", "RSI ", cmd); err != nil {
-					logger.logf("[yellow]", "RSI ", "rsi-loop finished with: %v", err)
-				} else {
-					logger.log("[green]", "RSI ", "rsi-loop iteration complete")
-				}
-				refresh()
-			}()
-			return nil
-
-		case tcell.KeyRune:
-			// Pass all runes through when the command bar is focused so the user
-			// can type freely without 'r' or 'q' triggering global hotkeys.
-			if app.GetFocus() == cmdInput {
-				return event
 			}
-			switch event.Rune() {
-			case ':':
-				app.SetFocus(cmdInput)
-				return nil
-			case 'r', 'R':
-				go func() {
-					logger.log("[darkgray]", "INFO", "Refreshing all panels...")
-					refresh()
-					logger.log("[darkgray]", "INFO", "Panels refreshed")
-				}()
-				return nil
-			case 'q', 'Q':
-				// Stop tickers and mark logger stopped before stopping the app
-				// to prevent goroutines calling QueueUpdateDraw on a stopped app.
-				ticker.Stop()
-				clockTicker.Stop()
-				logger.setStopped()
-				app.Stop()
-				return nil
-			case 't', 'T':
-				col2ShowObs = !col2ShowObs
-				app.QueueUpdateDraw(func() { renderCol2() })
-				mode := "APPLE FEED"
-				if col2ShowObs {
-					mode = "OBS TAIL"
-				}
-				logger.logf("[darkgray]", "INFO", "col2 → %s", mode)
-				return nil
-			case 'b', 'B':
-				col3ShowFatBaby = !col3ShowFatBaby
-				state.fatbabyMode = col3ShowFatBaby
-				if col3ShowFatBaby {
-					state.fatbabySummary = collectFatBabySummary(cfg)
-				}
-				app.QueueUpdateDraw(func() { renderCol3() })
-				mode := "SYSTEM HEALTH"
-				if col3ShowFatBaby {
-					mode = "FATBABY SIGNALS"
-				}
-				logger.logf("[darkgray]", "INFO", "col3 → %s", mode)
-				return nil
-			case 'h', 'H':
-				logger.log("[white]", "HELP", "F1=RSI  F2=Tyler  F3=start  F4=logs  t=obs  :=cmd  r=refresh  q=quit")
-				logger.log("[white]", "HELP", "CMD: pt <task>  eo <obs>  tyler [N]  start  refresh")
-				return nil
-			}
+			redraw()
+
+		case <-ticker15s.C:
+			doRefresh()
+
+		case <-clockTick.C:
+			requestDraw()
+
+		case <-drawCh:
+			redraw()
 		}
-		return event
-	})
-
-	if err := app.SetRoot(grid, true).EnableMouse(false).Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
-		return 1
 	}
+
 	return 0
 }
 
-// ── Helpers for hotkey handlers ───────────────────────────────────────────────
-
-func parsePrimeTaskID(out string) string {
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "task_id:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "task_id:"))
-		}
+// colLine returns lines[i] or "" if out of bounds.
+func colLine(lines []string, i int) string {
+	if i < len(lines) {
+		return lines[i]
 	}
-	return "unknown"
+	return ""
 }
 
-func countFilesInDir(dir string) int {
-	entries, err := os.ReadDir(dir)
+// ── Hotkey handlers (run in goroutines) ──────────────────────────────────────
+
+func tuiF1RSI(logger *tuiLogger, cfg *config.Config, refresh func()) {
+	claudeRunsDir := filepath.Join(cfg.FatBabyRoot, "claude-runs")
+
+	logger.log(ansiYellow, "TIC", "Dispatching RSI token-efficiency task to Emily Prime...")
+	out, err := exec.Command("emily", "prime-task", "--preset", "rsi-token-report").CombinedOutput()
 	if err != nil {
-		return 0
+		logger.logf(ansiRed, "ERR", "prime-task failed: %s", firstLine(string(out)))
+		return
 	}
-	n := 0
-	for _, e := range entries {
-		if !e.IsDir() {
-			n++
+	taskID := parsePrimeTaskID(string(out))
+	logger.logf(ansiYellow, "TIC", "task written: %s", taskID)
+	logger.log(ansiYellow, "TIC", "obs-watcher picks up within 10s")
+
+	logger.log(ansiCyan, "TOCK", "Polling claude-runs/ for completion (max 3 min)...")
+	initialLatest := latestFileInDir(claudeRunsDir)
+	waitStart := time.Now()
+	for {
+		if cur := latestFileInDir(claudeRunsDir); cur != "" && cur != initialLatest {
+			logger.logf(ansiCyan, "TOCK", "run detected → %s", cur)
+			break
 		}
+		elapsed := time.Since(waitStart)
+		if elapsed > 3*time.Minute {
+			logger.log(ansiYellow, "TOCK", "3 min timeout — obs-watcher may not be running")
+			break
+		}
+		time.Sleep(10 * time.Second)
+		logger.logf(ansiDarkGray, "TOCK", "...%ds elapsed", int(elapsed.Seconds()))
 	}
-	return n
+
+	tylerSh := "/home/fatbaby/TYLER/emily.sh"
+	if _, serr := os.Stat(tylerSh); serr == nil {
+		pending := tylerBacklogPending()
+		if pending == 0 {
+			logger.log(ansiMagenta, "ENTR", "Tyler backlog empty — skipping entropy injection")
+		} else {
+			logger.logf(ansiMagenta, "ENTR", "Running Tyler emily.sh 2 iterations (%d pending)...", pending)
+			cmd := exec.Command("bash", "-c", "cd /home/fatbaby/TYLER && ./emily.sh 2 2>&1")
+			if serr := logger.streamCmd(ansiMagenta, "ENTR", cmd); serr != nil {
+				logger.logf(ansiYellow, "ENTR", "Tyler returned non-zero (%v) — continuing", serr)
+			} else {
+				logger.log(ansiMagenta, "ENTR", "Tyler entropy injection complete")
+			}
+		}
+	} else {
+		logger.log(ansiDarkGray, "ENTR", "TYLER/emily.sh not found — skipping")
+	}
+
+	logger.log(ansiGreen, "ANLZ", "Posting RSI cycle observation...")
+	obsMsg := fmt.Sprintf("RSI tic-toc cycle complete — task %s dispatched, Tyler ran 2 builds", taskID)
+	obsOut, obsErr := exec.Command("emily", "observe", "-s", "info", obsMsg).CombinedOutput()
+	if obsErr != nil {
+		logger.logf(ansiYellow, "ANLZ", "observe warn (IDUNA offline?): %s", firstLine(string(obsOut)))
+	} else {
+		logger.log(ansiGreen, "ANLZ", "observation posted → obs-watcher triggers next cycle")
+	}
+
+	logger.log(ansiGreen, " ✓  ", "RSI tic-toc cycle complete — system advancing")
+	refresh()
 }
 
-// latestFileInDir returns the name of the most recently modified file in dir,
-// or "" if the directory is empty or unreadable. Used by TOCK detection.
-func latestFileInDir(dir string) string {
-	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) == 0 {
-		return ""
+func tuiF2Tyler(logger *tuiLogger, refresh func()) {
+	tylerSh := "/home/fatbaby/TYLER/emily.sh"
+	if _, err := os.Stat(tylerSh); err != nil {
+		logger.log(ansiRed, "ERR", "TYLER/emily.sh not found")
+		return
 	}
-	var latest os.DirEntry
-	var latestTime time.Time
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if latest == nil || info.ModTime().After(latestTime) {
-			latest = e
-			latestTime = info.ModTime()
-		}
+	pending := tylerBacklogPending()
+	if pending == 0 {
+		logger.log(ansiMagenta, "ENTR", "Tyler backlog empty — nothing to build")
+		return
 	}
-	if latest == nil {
-		return ""
+	logger.logf(ansiMagenta, "ENTR", "Tyler emily.sh 2 iterations (%d pending)...", pending)
+	cmd := exec.Command("bash", "-c", "cd /home/fatbaby/TYLER && ./emily.sh 2 2>&1")
+	if err := logger.streamCmd(ansiMagenta, "ENTR", cmd); err != nil {
+		logger.logf(ansiYellow, "ENTR", "Tyler: %v", err)
+	} else {
+		logger.log(ansiGreen, "ENTR", "Tyler RSI loop complete")
 	}
-	return latest.Name()
+	refresh()
 }
 
-// renderObsTailPanel fills the given panel with the last 10 lines of the most
-// recent observation file in fatbabyRoot/var/emily-observations/.
-func renderObsTailPanel(panel *tview.TextView, fatbabyRoot string) {
+func tuiF3Start(logger *tuiLogger, refresh func()) {
+	logger.log(ansiCyan, "SYS ", "Starting Emily OS stack...")
+	if err := logger.streamCmd(ansiCyan, "SYS ", exec.Command("emily", "start")); err != nil {
+		logger.logf(ansiYellow, "SYS ", "emily start: %v", err)
+	} else {
+		logger.log(ansiGreen, "SYS ", "stack started")
+	}
+	refresh()
+}
+
+func tuiF5RSIIter(logger *tuiLogger, refresh func()) {
+	rsiSh := "/home/fatbaby/EMILY/scripts/rsi-loop.sh"
+	if _, err := os.Stat(rsiSh); err != nil {
+		logger.log(ansiRed, "ERR", "EMILY/scripts/rsi-loop.sh not found")
+		return
+	}
+	logger.log(ansiGreen, "RSI ", "Firing rsi-loop.sh (1 iteration)...")
+	cmd := exec.Command("bash", "-c", "cd /home/fatbaby/EMILY && MAX_ITERS=1 SKIP_WAIT=1 ./scripts/rsi-loop.sh 2>&1")
+	if err := logger.streamCmd(ansiGreen, "RSI ", cmd); err != nil {
+		logger.logf(ansiYellow, "RSI ", "rsi-loop: %v", err)
+	} else {
+		logger.log(ansiGreen, "RSI ", "iteration complete")
+	}
+	refresh()
+}
+
+// ── Panel builders ────────────────────────────────────────────────────────────
+
+func buildHeader(s *tuiState, cols int) string {
+	idunaInd := ac(ansiRed, "●")
+	obsInd := ac(ansiRed, "●")
+	agentInd := ac(ansiRed, "●")
+	if s.iduna {
+		idunaInd = ac(ansiGreen, "●")
+	}
+	for _, p := range s.processes {
+		switch p.Name {
+		case "obs-watcher", "observation-watcher":
+			if p.Running {
+				obsInd = ac(ansiGreen, "●")
+			}
+		case "emily-agent":
+			if p.Running {
+				agentInd = ac(ansiGreen, "●")
+			}
+		}
+	}
+	appleCount := 0
+	if len(s.apples) > 0 {
+		appleCount = int(s.apples[0].ID)
+	}
+	ts := time.Now().Format("2006-01-02 15:04:05")
+	title := ansiBold + " EINHORN INDUSTRIAL " + ansiReset + ac(ansiYellow+ansiBold, "◈") + " " + ansiBold + "EMILY OS" + ansiReset
+	titleLen := ansiVLen(title)
+	pad := cols - titleLen - len(ts) - 1
+	if pad < 1 {
+		pad = 1
+	}
+	line1 := title + strings.Repeat(" ", pad) + ac(ansiDarkGray, ts)
+	line2 := fmt.Sprintf("  IDUNA:%s  OBS:%s  AGENT:%s  %sApples:%d  Repos:%d%s",
+		idunaInd, obsInd, agentInd, ansiDarkGray, appleCount, len(s.repos), ansiReset)
+	return line1 + "\n" + line2 + "\n"
+}
+
+func buildRepoPanel(s *tuiState, width, height int) []string {
+	var lines []string
+	lines = append(lines, ansiBold+"REPOS"+ansiReset)
+	for _, r := range s.repos {
+		dirty := " " + ac(ansiGreen, "✓")
+		if r.DirtyCount > 0 {
+			dirty = " " + ac(ansiRed, fmt.Sprintf("✗%d", r.DirtyCount))
+		}
+		name := r.Name
+		if len(name) > 10 {
+			name = name[:10]
+		}
+		branch := r.Branch
+		if len(branch) > 8 {
+			branch = branch[:8]
+		}
+		lines = append(lines, fmt.Sprintf("  %-10s %s%s%s %s%s%s%s",
+			name,
+			ansiCyan, branch, ansiReset,
+			dirty,
+			ansiDarkGray, r.LastCommit, ansiReset))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, ansiBold+"TASKS"+ansiReset)
+	if s.tasks.Count == 0 {
+		lines = append(lines, "  "+ac(ansiGreen, "queue empty"))
+	} else {
+		lines = append(lines, fmt.Sprintf("  %s%d task(s)%s queued", ansiYellow, s.tasks.Count, ansiReset))
+		if s.tasks.Oldest != "" {
+			lines = append(lines, fmt.Sprintf("  oldest: %s%s%s", ansiDarkGray, s.tasks.Oldest, ansiReset))
+		}
+		for i, f := range s.tasks.Files {
+			if i >= 3 {
+				lines = append(lines, fmt.Sprintf("  %s…+%d more%s", ansiDarkGray, len(s.tasks.Files)-3, ansiReset))
+				break
+			}
+			maxLen := width - 4
+			if len(f) > maxLen && maxLen > 3 {
+				f = f[:maxLen-3] + "..."
+			}
+			lines = append(lines, fmt.Sprintf("  %s%s%s", ansiDarkGray, f, ansiReset))
+		}
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, ansiBold+"TOKENS"+ansiReset)
+	te := s.tokenEst
+	if te.RunsToday == 0 && te.EmilyPrimeCycles == 0 {
+		lines = append(lines, "  "+ac(ansiDarkGray, "no runs today"))
+	} else {
+		if te.RunsToday > 0 {
+			q := ac(ansiDarkGray, "(est.)")
+			if te.HasActual {
+				q = ac(ansiGreen, "(actual)")
+			}
+			lines = append(lines, fmt.Sprintf("  claude: %s%d runs %.0fk%s %s", ansiCyan, te.RunsToday, te.TodayK, ansiReset, q))
+			lines = append(lines, fmt.Sprintf("  last:   %s%.1fk%s", ansiDarkGray, te.LastRunK, ansiReset))
+		}
+		if te.EmilyPrimeCycles > 0 {
+			lines = append(lines, fmt.Sprintf("  prime:  %s%d cycles %.0fk%s %s(IDUNA)%s",
+				ansiCyan, te.EmilyPrimeCycles, te.EmilyPrimeTodayK, ansiReset, ansiGreen, ansiReset))
+		}
+	}
+
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+func buildFeedPanel(s *tuiState, width, height int) []string {
+	var lines []string
+	if !s.iduna {
+		lines = append(lines, ac(ansiDarkGray, "  IDUNA offline"))
+		lines = append(lines, "  "+ac(ansiCyan, "emily start --iduna"))
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+		return lines
+	}
+	if len(s.apples) == 0 {
+		lines = append(lines, ac(ansiDarkGray, "  no apples — press F1 to begin"))
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+		return lines
+	}
+	for _, a := range s.apples {
+		ageStr := "?"
+		if t, err := time.Parse(time.RFC3339, a.RecordedAt); err == nil {
+			ageStr = humanDuration(time.Since(t))
+		}
+		typeColor := ansiCyan
+		switch {
+		case strings.HasPrefix(a.AppleType, "rsi"):
+			typeColor = ansiGreen
+		case strings.HasPrefix(a.AppleType, "prime_task"):
+			typeColor = ansiYellow
+		case strings.HasPrefix(a.AppleType, "signal"):
+			typeColor = ansiBlue
+		case a.AppleType == "completion" || a.AppleType == "backlog_completion":
+			typeColor = ansiGreen
+		}
+		repo := a.SourceRepo
+		if len(repo) > 8 {
+			repo = repo[:8]
+		}
+		title := a.Title
+		maxT := width - 42
+		if maxT < 5 {
+			maxT = 5
+		}
+		if len(title) > maxT {
+			title = title[:maxT-3] + "..."
+		}
+		lines = append(lines, fmt.Sprintf("  %s#%-4d%s %-8s %s%-14s%s %s %s%s%s",
+			ansiDarkGray, a.ID, ansiReset,
+			repo,
+			typeColor, a.AppleType, ansiReset,
+			title,
+			ansiDarkGray, ageStr, ansiReset))
+		if len(lines) >= height {
+			break
+		}
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+func buildObsPanel(fatbabyRoot string, width, height int) []string {
+	var lines []string
 	obsDir := filepath.Join(fatbabyRoot, "var", "emily-observations")
 	entries, err := os.ReadDir(obsDir)
 	if err != nil {
-		fmt.Fprintf(panel, "[red]obs dir unreadable: %v[-]\n", err)
-		return
+		lines = append(lines, ac(ansiRed, "  obs dir unreadable"))
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+		return lines
 	}
-	// Find most-recently modified .json file (excluding dot files).
 	var latestPath string
 	var latestMod time.Time
 	for _, e := range entries {
@@ -682,147 +957,155 @@ func renderObsTailPanel(panel *tview.TextView, fatbabyRoot string) {
 		}
 	}
 	if latestPath == "" {
-		fmt.Fprintf(panel, "[darkgray]no observation files found[-]\n")
-		return
+		lines = append(lines, ac(ansiDarkGray, "  no observation files"))
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+		return lines
 	}
 	data, err := os.ReadFile(latestPath)
 	if err != nil {
-		fmt.Fprintf(panel, "[red]read error: %v[-]\n", err)
-		return
+		lines = append(lines, ac(ansiRed, "  read error"))
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+		return lines
 	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	if len(lines) > 10 {
-		lines = lines[len(lines)-10:]
+	lines = append(lines, ac(ansiDarkGray, "  "+filepath.Base(latestPath)))
+	for _, l := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		lines = append(lines, "  "+l)
+		if len(lines) >= height {
+			break
+		}
 	}
-	panel.Clear()
-	fmt.Fprintf(panel, "[darkgray]%s[-]\n", filepath.Base(latestPath))
-	for _, l := range lines {
-		// Escape tview markup characters to prevent rendering glitches.
-		l = strings.ReplaceAll(l, "[", "[[")
-		fmt.Fprintf(panel, "%s\n", l)
+	for len(lines) < height {
+		lines = append(lines, "")
 	}
+	return lines
 }
 
-func tylerBacklogPending() int {
-	data, err := os.ReadFile("/home/fatbaby/TYLER/BACKLOG.md")
-	if err != nil {
-		return -1
-	}
-	count := 0
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "- [ ]") {
-			count++
+func buildHealthPanel(s *tuiState, width, height int) []string {
+	var lines []string
+	lines = append(lines, ansiBold+"PROCESSES"+ansiReset)
+	for _, p := range s.processes {
+		indicator := ac(ansiRed, "● STOP")
+		if p.Running {
+			indicator = ac(ansiGreen, "● RUN ")
 		}
+		name := p.Name
+		if len(name) > 14 {
+			name = name[:14]
+		}
+		note := p.Note
+		if len(note) > 10 {
+			note = note[:10]
+		}
+		lines = append(lines, fmt.Sprintf("  %-14s %s %s%s%s", name, indicator, ansiDarkGray, note, ansiReset))
 	}
-	return count
+
+	lines = append(lines, "")
+	lines = append(lines, ansiBold+"RSI LOOP"+ansiReset)
+	if !s.rsiLoop.Running {
+		lines = append(lines, "  "+ac(ansiDarkGray, "not running"))
+		lines = append(lines, "  "+ac(ansiYellow, "[F5]")+" fire 1 iteration")
+	} else {
+		lines = append(lines, fmt.Sprintf("  iter:  %s%d%s", ansiCyan, s.rsiLoop.Iteration, ansiReset))
+		lines = append(lines, fmt.Sprintf("  last:  %s%s%s", ansiDarkGray, s.rsiLoop.LastAt, ansiReset))
+		lines = append(lines, fmt.Sprintf("  phase: %s%s%s", ansiCyan, s.rsiLoop.Phase, ansiReset))
+		tid := s.rsiLoop.TaskID
+		if len(tid) > 18 {
+			tid = tid[:15] + "..."
+		}
+		lines = append(lines, fmt.Sprintf("  task:  %s%s%s", ansiDarkGray, tid, ansiReset))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, ansiBold+"ACTIONS"+ansiReset)
+	for _, row := range [][2]string{
+		{"[F1]", "RSI tic-toc"},
+		{"[F2]", "Tyler entropy"},
+		{"[F3]", "start system"},
+		{"[F4]", "tail log"},
+		{"[F5]", "RSI iteration"},
+		{"[:]", "cmd bar"},
+		{"[r]", "refresh"},
+		{"[q]", "quit"},
+	} {
+		lines = append(lines, fmt.Sprintf("  %s%s%s %s", ansiYellow, row[0], ansiReset, row[1]))
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return lines
 }
 
-// dispatchTUICmd parses and executes operator commands typed into the CMD bar.
-// Supported verbs:
-//
-//	pt <text>        — emily prime-task <text>
-//	prime-task <t>   — same
-//	eo <text>        — emily observe -s info <text>
-//	observe <text>   — same
-//	tyler [N]        — run TYLER/emily.sh N (default 2) iterations
-//	start            — emily start
-//	refresh          — refresh all panels
-func dispatchTUICmd(input string, logger *tuiLogger, cfg *config.Config, refresh func()) {
-	parts := strings.Fields(input)
-	if len(parts) == 0 {
-		return
+func buildFatBabyPanel(s *tuiState, width, height int) []string {
+	fb := &s.fatbabySummary
+	var lines []string
+	lines = append(lines, ansiBold+"FATBABY PROCS"+ansiReset)
+	for _, p := range fb.Processes {
+		indicator := ac(ansiRed, "● STOP")
+		if p.Running {
+			indicator = ac(ansiGreen, "● RUN ")
+		}
+		name := p.Name
+		if len(name) > 14 {
+			name = name[:14]
+		}
+		lines = append(lines, fmt.Sprintf("  %-14s %s", name, indicator))
 	}
-	verb := parts[0]
-	rest := strings.TrimSpace(strings.TrimPrefix(input, verb))
-
-	switch verb {
-	case "pt", "prime-task":
-		if rest == "" {
-			logger.log("[yellow]", "CMD ", "usage: pt <task description>")
-			return
+	lines = append(lines, "")
+	lines = append(lines, ansiBold+"ENTITY GRAPH"+ansiReset)
+	lines = append(lines, fmt.Sprintf("  nodes:   %s%d%s", ansiCyan, fb.NodeCount, ansiReset))
+	lines = append(lines, fmt.Sprintf("  signals: %s%d%s", ansiCyan, fb.SignalCount, ansiReset))
+	if fb.RecentSignal != "" {
+		recent := fb.RecentSignal
+		if len(recent) > 22 {
+			recent = recent[:19] + "..."
 		}
-		logger.logf("[yellow]", "CMD ", "prime-task: %s", rest)
-		out, err := exec.Command("emily", "prime-task", rest).CombinedOutput()
-		if err != nil {
-			logger.logf("[red]", "ERR", "prime-task failed: %s", firstLine(string(out)))
-			return
-		}
-		taskID := parsePrimeTaskID(string(out))
-		logger.logf("[yellow]", "CMD ", "task dispatched: %s", taskID)
-		refresh()
-
-	case "eo", "observe":
-		if rest == "" {
-			logger.log("[yellow]", "CMD ", "usage: eo <observation>")
-			return
-		}
-		logger.logf("[green]", "CMD ", "observe: %s", rest)
-		out, err := exec.Command("emily", "observe", "-s", "info", rest).CombinedOutput()
-		if err != nil {
-			logger.logf("[yellow]", "CMD ", "observe warn: %s", firstLine(string(out)))
-		} else {
-			_ = out
-			logger.log("[green]", "CMD ", "observation posted")
-		}
-
-	case "tyler":
-		n := "2"
-		if len(parts) > 1 {
-			n = parts[1]
-		}
-		tylerSh := "/home/fatbaby/TYLER/emily.sh"
-		if _, err := os.Stat(tylerSh); err != nil {
-			logger.log("[red]", "ERR", "TYLER/emily.sh not found")
-			return
-		}
-		logger.logf("[magenta]", "CMD ", "Tyler %s iterations...", n)
-		cmd := exec.Command("bash", "-c", "cd /home/fatbaby/TYLER && ./emily.sh "+n+" 2>&1")
-		if err := logger.streamCmd("[magenta]", "ENTR", cmd); err != nil {
-			logger.logf("[yellow]", "CMD ", "Tyler error: %v", err)
-		} else {
-			logger.log("[green]", "CMD ", "Tyler complete")
-		}
-		refresh()
-
-	case "start":
-		logger.log("[cyan]", "CMD ", "emily start...")
-		cmd := exec.Command("emily", "start")
-		if err := logger.streamCmd("[cyan]", "SYS ", cmd); err != nil {
-			logger.logf("[yellow]", "CMD ", "emily start: %v", err)
-		}
-		refresh()
-
-	case "refresh", "r":
-		logger.log("[darkgray]", "CMD ", "refreshing...")
-		refresh()
-
-	default:
-		logger.logf("[yellow]", "CMD ", "unknown command %q — try: pt, eo, tyler [N], start, refresh", verb)
+		lines = append(lines, fmt.Sprintf("  latest:  %s%s%s", ansiDarkGray, recent, ansiReset))
 	}
+	lines = append(lines, "")
+	lines = append(lines, ansiBold+"EPS"+ansiReset)
+	lines = append(lines, fmt.Sprintf("  cases:   %s%d%s", ansiCyan, fb.EpsCount, ansiReset))
+	lines = append(lines, "")
+	lines = append(lines, ansiBold+"ACTIONS"+ansiReset)
+	lines = append(lines, fmt.Sprintf("  %s[b]%s toggle health", ansiYellow, ansiReset))
+	lines = append(lines, fmt.Sprintf("  %s[r]%s refresh", ansiYellow, ansiReset))
+	lines = append(lines, fmt.Sprintf("  %s[q]%s quit", ansiYellow, ansiReset))
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+func buildFooter(s *tuiState, fatbaby bool, cols int) string {
+	suffix := ""
+	if fatbaby {
+		suffix = "  " + ac(ansiYellow, "[FATBABY]")
+	}
+	ts := s.refreshedAt.Format("15:04:05")
+	base := ac(ansiDarkGray, " emily tui v0.9.0 | "+ts+" | F1=tic-toc F2=Tyler F3=start F4=logs b=fatbaby :=cmd r=refresh q=quit")
+	return base + suffix
 }
 
 // ── Data collection ───────────────────────────────────────────────────────────
 
 func collectState(cfg *config.Config) tuiState {
 	s := tuiState{refreshedAt: time.Now()}
-
 	for _, r := range repoDefs {
 		s.repos = append(s.repos, gitRepoStatus(r.Name, r.Path))
 	}
-
 	if cfg.IDUNAAgentSecret != "" {
 		client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
 		apples, _ := client.ListApples(iduna.AppleListFilters{Limit: 30})
 		s.apples = apples
-		if len(apples) > 0 {
-			s.iduna = true
-		}
+		s.iduna = len(apples) > 0
 	} else {
 		_, err := exec.Command("curl", "-sf", "--max-time", "2",
 			cfg.IDUNABaseURL+"/api/v1/apples").Output()
 		s.iduna = err == nil
 	}
-
 	s.processes = collectProcesses(cfg)
 	s.tasks = collectTasks(cfg)
 	s.rsiLoop = collectRSIState(cfg)
@@ -901,18 +1184,9 @@ func estimateTokens(cfg *config.Config) tokenEstimate {
 		return tokenEstimate{}
 	}
 	today := time.Now().UTC().Format("2006-01-02")
-
 	type runReport struct {
 		TokensUsed int64 `json:"tokens_used"`
 	}
-
-	runsToday := 0
-	var todayTokens int64
-	var lastTokens int64
-	hasActual := false
-
-	// Walk all entries, accumulate today's runs and parse tokens_used if present.
-	// Sort descending so we encounter the most recent run first.
 	sortedEntries := make([]os.DirEntry, 0, len(entries))
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
@@ -922,18 +1196,20 @@ func estimateTokens(cfg *config.Config) tokenEstimate {
 	sort.Slice(sortedEntries, func(i, j int) bool {
 		return sortedEntries[i].Name() > sortedEntries[j].Name()
 	})
-
+	var runsToday int
+	var todayTokens, lastTokens int64
+	hasActual := false
 	for _, e := range sortedEntries {
 		if !strings.HasPrefix(e.Name(), today) {
 			continue
 		}
 		runsToday++
-		data, readErr := os.ReadFile(filepath.Join(cfg.FatBabyRoot, "claude-runs", e.Name()))
-		if readErr != nil {
+		data, err := os.ReadFile(filepath.Join(cfg.FatBabyRoot, "claude-runs", e.Name()))
+		if err != nil {
 			continue
 		}
 		var r runReport
-		if jsonErr := json.Unmarshal(data, &r); jsonErr == nil && r.TokensUsed > 0 {
+		if json.Unmarshal(data, &r) == nil && r.TokensUsed > 0 {
 			todayTokens += r.TokensUsed
 			if !hasActual {
 				lastTokens = r.TokensUsed
@@ -941,37 +1217,28 @@ func estimateTokens(cfg *config.Config) tokenEstimate {
 			}
 		}
 	}
-
 	const estPerRunK = 8.2
 	if hasActual {
-		todayK := float64(todayTokens) / 1000.0
-		lastK := float64(lastTokens) / 1000.0
-		return tokenEstimate{TodayK: todayK, LastRunK: lastK, RunsToday: runsToday, HasActual: true}
+		return tokenEstimate{
+			TodayK: float64(todayTokens) / 1000, LastRunK: float64(lastTokens) / 1000,
+			RunsToday: runsToday, HasActual: true,
+		}
 	}
 	return tokenEstimate{TodayK: float64(runsToday) * estPerRunK, LastRunK: estPerRunK, RunsToday: runsToday}
 }
 
-// fetchTokenSpendFromIDUNA queries IDUNA for today's emily-source Apples and
-// extracts tokens_used from their metadata. Returns a partial tokenEstimate
-// with EmilyPrimeTodayK and EmilyPrimeCycles populated.
 func fetchTokenSpendFromIDUNA(client *iduna.Client) tokenEstimate {
-	apples, err := client.ListApples(iduna.AppleListFilters{
-		SourceRepo: "emily",
-		Limit:      100,
-	})
+	apples, err := client.ListApples(iduna.AppleListFilters{SourceRepo: "emily", Limit: 100})
 	if err != nil {
 		return tokenEstimate{}
 	}
-
 	today := time.Now().UTC().Format("2006-01-02")
 	var totalTokens int64
 	cycles := 0
-
 	for _, a := range apples {
 		if !strings.HasPrefix(a.RecordedAt, today) {
 			continue
 		}
-		// Fetch full Apple body to get metadata with tokens_used.
 		full, err := client.GetApple(a.ID)
 		if err != nil || full == nil || len(full.Metadata) == 0 {
 			continue
@@ -984,17 +1251,12 @@ func fetchTokenSpendFromIDUNA(client *iduna.Client) tokenEstimate {
 			cycles++
 		}
 	}
-
 	if cycles == 0 {
 		return tokenEstimate{}
 	}
-	return tokenEstimate{
-		EmilyPrimeTodayK: float64(totalTokens) / 1000.0,
-		EmilyPrimeCycles: cycles,
-	}
+	return tokenEstimate{EmilyPrimeTodayK: float64(totalTokens) / 1000, EmilyPrimeCycles: cycles}
 }
 
-// mergeIDUNATokens combines local file-based token estimates with IDUNA-sourced Emily Prime data.
 func mergeIDUNATokens(base, idunaPrime tokenEstimate) tokenEstimate {
 	base.EmilyPrimeTodayK = idunaPrime.EmilyPrimeTodayK
 	base.EmilyPrimeCycles = idunaPrime.EmilyPrimeCycles
@@ -1002,275 +1264,164 @@ func mergeIDUNATokens(base, idunaPrime tokenEstimate) tokenEstimate {
 }
 
 func collectFatBabySummary(cfg *config.Config) fatBabySummary {
-	s := fatBabySummary{}
-	s.Processes = collectFatBabyProcesses(cfg)
-
+	s := fatBabySummary{Processes: collectFatBabyProcesses(cfg)}
 	signalsPath := filepath.Join(cfg.FatBabyRoot, "var", "entity-graph", "signals.ndjson")
 	if data, err := os.ReadFile(signalsPath); err == nil {
 		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 		s.SignalCount = len(lines)
-		// Read last line for most recent signal
 		for i := len(lines) - 1; i >= 0; i-- {
 			if strings.TrimSpace(lines[i]) == "" {
 				continue
 			}
 			var sig signalRecord
-			if err := json.Unmarshal([]byte(lines[i]), &sig); err == nil {
+			if json.Unmarshal([]byte(lines[i]), &sig) == nil {
 				s.RecentSignal = fmt.Sprintf("%s %s", sig.Ticker, sig.Type)
 			}
 			break
 		}
 	}
-
-	nodesPath := filepath.Join(cfg.FatBabyRoot, "var", "entity-graph", "nodes.ndjson")
-	if data, err := os.ReadFile(nodesPath); err == nil {
+	if data, err := os.ReadFile(filepath.Join(cfg.FatBabyRoot, "var", "entity-graph", "nodes.ndjson")); err == nil {
 		s.NodeCount = strings.Count(string(data), "\n")
 	}
-
-	epsDir := filepath.Join(cfg.FatBabyRoot, "var", "eps")
-	if entries, err := os.ReadDir(epsDir); err == nil {
+	if entries, err := os.ReadDir(filepath.Join(cfg.FatBabyRoot, "var", "eps")); err == nil {
 		s.EpsCount = len(entries)
 	}
 	return s
 }
 
-// ── Renderers ─────────────────────────────────────────────────────────────────
+// ── Command dispatcher ────────────────────────────────────────────────────────
 
-func renderHeader(tv *tview.TextView, s *tuiState) {
-	idunaColor := "[red]●[-]"
-	if s.iduna {
-		idunaColor = "[green]●[-]"
-	}
-	obsColor, agentColor := "[red]●[-]", "[red]●[-]"
-	for _, p := range s.processes {
-		switch p.Name {
-		case "obs-watcher":
-			if p.Running {
-				obsColor = "[green]●[-]"
-			}
-		case "emily-agent":
-			if p.Running {
-				agentColor = "[green]●[-]"
-			}
-		}
-	}
-	appleCount := 0
-	if len(s.apples) > 0 {
-		appleCount = int(s.apples[0].ID)
-	}
-	tv.SetText(
-		fmt.Sprintf("[white::b] EINHORN INDUSTRIAL [-] [yellow::b]◈[-] [white::b]EMILY OS[-]%s[darkgray]%s[-]\n",
-			strings.Repeat(" ", 20), time.Now().Format("2006-01-02 15:04:05")) +
-			fmt.Sprintf("  IDUNA:%s  OBS:%s  EMILY-AGENT:%s  [darkgray]Apples:%d  Repos:%d[-]",
-				idunaColor, obsColor, agentColor, appleCount, len(s.repos)),
-	)
-}
-
-func renderRepoPanel(tv *tview.TextView, s *tuiState) {
-	var sb strings.Builder
-	sb.WriteString("[white::b]REPOS[-]\n")
-	for _, r := range s.repos {
-		dirty := " [green]✓[-]"
-		if r.DirtyCount > 0 {
-			dirty = fmt.Sprintf(" [red]✗%d[-]", r.DirtyCount)
-		}
-		name := r.Name
-		if len(name) > 10 {
-			name = name[:10]
-		}
-		branch := r.Branch
-		if len(branch) > 8 {
-			branch = branch[:8]
-		}
-		sb.WriteString(fmt.Sprintf("  %-10s [cyan]%-8s[-]%s [darkgray]%s[-]\n",
-			name, branch, dirty, r.LastCommit))
-	}
-
-	sb.WriteString("\n[white::b]PENDING TASKS[-]\n")
-	if s.tasks.Count == 0 {
-		sb.WriteString("  [green]queue empty[-]\n")
-	} else {
-		sb.WriteString(fmt.Sprintf("  [yellow]%d task(s)[-] queued\n", s.tasks.Count))
-		if s.tasks.Oldest != "" {
-			sb.WriteString(fmt.Sprintf("  oldest: [darkgray]%s[-]\n", s.tasks.Oldest))
-		}
-		for i, f := range s.tasks.Files {
-			if i >= 3 {
-				sb.WriteString(fmt.Sprintf("  [darkgray]… +%d more[-]\n", len(s.tasks.Files)-3))
-				break
-			}
-			if len(f) > 28 {
-				f = f[:25] + "..."
-			}
-			sb.WriteString(fmt.Sprintf("  [darkgray]%s[-]\n", f))
-		}
-	}
-
-	sb.WriteString("\n[white::b]TOKEN BUDGET[-]\n")
-	if s.tokenEst.RunsToday == 0 && s.tokenEst.EmilyPrimeCycles == 0 {
-		sb.WriteString("  [darkgray]no runs today[-]\n")
-	} else {
-		if s.tokenEst.RunsToday > 0 {
-			qualifier := "[darkgray](est.)[-]"
-			if s.tokenEst.HasActual {
-				qualifier = "[green](actual)[-]"
-			}
-			sb.WriteString(fmt.Sprintf("  claude-code:  [cyan]%d runs, %.0fk tokens[-] %s\n",
-				s.tokenEst.RunsToday, s.tokenEst.TodayK, qualifier))
-			sb.WriteString(fmt.Sprintf("  last run:     [darkgray]%.1fk[-]\n", s.tokenEst.LastRunK))
-		}
-		if s.tokenEst.EmilyPrimeCycles > 0 {
-			sb.WriteString(fmt.Sprintf("  emily-prime:  [cyan]%d cycles, %.0fk tokens[-] [green](IDUNA)[-]\n",
-				s.tokenEst.EmilyPrimeCycles, s.tokenEst.EmilyPrimeTodayK))
-		} else if s.tokenEst.RunsToday == 0 {
-			sb.WriteString("  [darkgray]no runs today[-]\n")
-		}
-	}
-
-	tv.SetText(sb.String())
-}
-
-func renderFeedPanel(tv *tview.TextView, s *tuiState) {
-	var sb strings.Builder
-	if !s.iduna {
-		sb.WriteString("[darkgray]  IDUNA offline — Apple feed unavailable\n\n")
-		sb.WriteString("  [cyan]emily start --iduna[-]\n")
-		tv.SetText(sb.String())
+func dispatchTUICmd(input string, logger *tuiLogger, cfg *config.Config, refresh func()) {
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
 		return
 	}
-	if len(s.apples) == 0 {
-		sb.WriteString("[darkgray]  No Apples yet — press F1 to begin[-]\n")
-		tv.SetText(sb.String())
-		return
+	verb := parts[0]
+	rest := strings.TrimSpace(strings.TrimPrefix(input, verb))
+
+	switch verb {
+	case "pt", "prime-task":
+		if rest == "" {
+			logger.log(ansiYellow, "CMD ", "usage: pt <task description>")
+			return
+		}
+		logger.logf(ansiYellow, "CMD ", "prime-task: %s", rest)
+		out, err := exec.Command("emily", "prime-task", rest).CombinedOutput()
+		if err != nil {
+			logger.logf(ansiRed, "ERR", "prime-task: %s", firstLine(string(out)))
+			return
+		}
+		logger.logf(ansiYellow, "CMD ", "dispatched: %s", parsePrimeTaskID(string(out)))
+		refresh()
+	case "eo", "observe":
+		if rest == "" {
+			logger.log(ansiYellow, "CMD ", "usage: eo <observation>")
+			return
+		}
+		logger.logf(ansiGreen, "CMD ", "observe: %s", rest)
+		out, err := exec.Command("emily", "observe", "-s", "info", rest).CombinedOutput()
+		if err != nil {
+			logger.logf(ansiYellow, "CMD ", "observe warn: %s", firstLine(string(out)))
+		} else {
+			_ = out
+			logger.log(ansiGreen, "CMD ", "observation posted")
+		}
+	case "tyler":
+		n := "2"
+		if len(parts) > 1 {
+			n = parts[1]
+		}
+		if _, err := os.Stat("/home/fatbaby/TYLER/emily.sh"); err != nil {
+			logger.log(ansiRed, "ERR", "TYLER/emily.sh not found")
+			return
+		}
+		logger.logf(ansiMagenta, "CMD ", "Tyler %s iterations...", n)
+		cmd := exec.Command("bash", "-c", "cd /home/fatbaby/TYLER && ./emily.sh "+n+" 2>&1")
+		if err := logger.streamCmd(ansiMagenta, "ENTR", cmd); err != nil {
+			logger.logf(ansiYellow, "CMD ", "Tyler: %v", err)
+		} else {
+			logger.log(ansiGreen, "CMD ", "Tyler complete")
+		}
+		refresh()
+	case "start":
+		logger.log(ansiCyan, "CMD ", "emily start...")
+		if err := logger.streamCmd(ansiCyan, "SYS ", exec.Command("emily", "start")); err != nil {
+			logger.logf(ansiYellow, "CMD ", "start: %v", err)
+		}
+		refresh()
+	case "refresh", "r":
+		logger.log(ansiDarkGray, "CMD ", "refreshing...")
+		refresh()
+	default:
+		logger.logf(ansiYellow, "CMD ", "unknown %q — try: pt, eo, tyler [N], start, refresh", verb)
 	}
-	for _, a := range s.apples {
-		ageStr := "?"
-		if t, err := time.Parse(time.RFC3339, a.RecordedAt); err == nil {
-			ageStr = humanDuration(time.Since(t))
-		}
-		typeColor := "[cyan]"
-		switch {
-		case strings.HasPrefix(a.AppleType, "rsi"):
-			typeColor = "[green]"
-		case strings.HasPrefix(a.AppleType, "prime_task"):
-			typeColor = "[yellow]"
-		case strings.HasPrefix(a.AppleType, "signal"):
-			typeColor = "[blue]"
-		case a.AppleType == "completion" || a.AppleType == "backlog_completion":
-			typeColor = "[green]"
-		}
-		repo := a.SourceRepo
-		if len(repo) > 8 {
-			repo = repo[:8]
-		}
-		title := a.Title
-		if len(title) > 36 {
-			title = title[:33] + "..."
-		}
-		sb.WriteString(fmt.Sprintf("  [darkgray]#%-4d[-] %-8s %s%-14s[-] [white]%s[-] [darkgray]%s[-]\n",
-			a.ID, repo, typeColor, a.AppleType, title, ageStr))
-	}
-	tv.SetText(sb.String())
-	tv.ScrollToBeginning()
-}
-
-func renderHealthPanel(tv *tview.TextView, s *tuiState) {
-	var sb strings.Builder
-	sb.WriteString("[white::b]PROCESSES[-]\n")
-	for _, p := range s.processes {
-		indicator := "[red]● STOP[-]"
-		if p.Running {
-			indicator = "[green]● RUN [-]"
-		}
-		name := p.Name
-		if len(name) > 14 {
-			name = name[:14]
-		}
-		note := p.Note
-		if len(note) > 10 {
-			note = note[:10]
-		}
-		sb.WriteString(fmt.Sprintf("  %-14s %s [darkgray]%s[-]\n", name, indicator, note))
-	}
-
-	sb.WriteString("\n[white::b]RSI LOOP[-]\n")
-	if !s.rsiLoop.Running {
-		sb.WriteString("  [darkgray]not running[-]\n")
-		sb.WriteString("  [yellow][F5][-] fire 1 iteration\n")
-	} else {
-		sb.WriteString(fmt.Sprintf("  iter:  [cyan]%d[-]\n", s.rsiLoop.Iteration))
-		sb.WriteString(fmt.Sprintf("  last:  [darkgray]%s[-]\n", s.rsiLoop.LastAt))
-		sb.WriteString(fmt.Sprintf("  phase: [cyan]%s[-]\n", s.rsiLoop.Phase))
-		tid := s.rsiLoop.TaskID
-		if len(tid) > 18 {
-			tid = tid[:15] + "..."
-		}
-		sb.WriteString(fmt.Sprintf("  task:  [darkgray]%s[-]\n", tid))
-	}
-
-	sb.WriteString("\n[white::b]ACTIONS[-]\n")
-	sb.WriteString("  [yellow][F1][-] RSI tic-toc cycle\n")
-	sb.WriteString("  [yellow][F2][-] Tyler entropy\n")
-	sb.WriteString("  [yellow][F3][-] start system\n")
-	sb.WriteString("  [yellow][F4][-] tail rsi-loop log\n")
-	sb.WriteString("  [yellow][F5][-] fire RSI iteration\n")
-	sb.WriteString("  [yellow][:] [-] command bar\n")
-	sb.WriteString("  [yellow][r] [-] refresh\n")
-	sb.WriteString("  [yellow][q] [-] quit\n")
-
-	tv.SetText(sb.String())
-}
-
-func renderFatBabyPanel(tv *tview.TextView, s *tuiState) {
-	fb := &s.fatbabySummary
-	var sb strings.Builder
-	sb.WriteString("[white::b]FATBABY PROCESSES[-]\n")
-	for _, p := range fb.Processes {
-		indicator := "[red]● STOP[-]"
-		if p.Running {
-			indicator = "[green]● RUN [-]"
-		}
-		name := p.Name
-		if len(name) > 14 {
-			name = name[:14]
-		}
-		sb.WriteString(fmt.Sprintf("  %-14s %s\n", name, indicator))
-	}
-
-	sb.WriteString("\n[white::b]ENTITY GRAPH[-]\n")
-	sb.WriteString(fmt.Sprintf("  nodes:   [cyan]%d[-]\n", fb.NodeCount))
-	sb.WriteString(fmt.Sprintf("  signals: [cyan]%d[-]\n", fb.SignalCount))
-	if fb.RecentSignal != "" {
-		recent := fb.RecentSignal
-		if len(recent) > 22 {
-			recent = recent[:19] + "..."
-		}
-		sb.WriteString(fmt.Sprintf("  latest:  [darkgray]%s[-]\n", recent))
-	}
-
-	sb.WriteString("\n[white::b]EPS[-]\n")
-	sb.WriteString(fmt.Sprintf("  cases:   [cyan]%d[-]\n", fb.EpsCount))
-
-	sb.WriteString("\n[white::b]ACTIONS[-]\n")
-	sb.WriteString("  [yellow][b] [-] toggle health/fatbaby\n")
-	sb.WriteString("  [yellow][r] [-] refresh\n")
-	sb.WriteString("  [yellow][q] [-] quit\n")
-
-	tv.SetText(sb.String())
-}
-
-func renderFooter(tv *tview.TextView, s *tuiState) {
-	fatbabySuffix := ""
-	if s.fatbabyMode {
-		fatbabySuffix = "  [yellow][FATBABY][-]"
-	}
-	tv.SetText(fmt.Sprintf(
-		"[darkgray] emily tui v0.8.0 | %s | F1=tic-toc  F2=Tyler  F3=start  F4=logs  b=fatbaby  :=cmd  r=refresh  q=quit[-]%s",
-		s.refreshedAt.Format("15:04:05"), fatbabySuffix,
-	))
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
+
+func parsePrimeTaskID(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "task_id:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "task_id:"))
+		}
+	}
+	return "unknown"
+}
+
+func countFilesInDir(dir string) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			n++
+		}
+	}
+	return n
+}
+
+func latestFileInDir(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return ""
+	}
+	var latest os.DirEntry
+	var latestTime time.Time
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if latest == nil || info.ModTime().After(latestTime) {
+			latest = e
+			latestTime = info.ModTime()
+		}
+	}
+	if latest == nil {
+		return ""
+	}
+	return latest.Name()
+}
+
+func tylerBacklogPending() int {
+	data, err := os.ReadFile("/home/fatbaby/TYLER/BACKLOG.md")
+	if err != nil {
+		return -1
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "- [ ]") {
+			count++
+		}
+	}
+	return count
+}
 
 func humanDuration(d time.Duration) string {
 	d = d.Round(time.Second)

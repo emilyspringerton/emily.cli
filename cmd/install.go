@@ -14,6 +14,19 @@ import (
 )
 
 func RunInstall(args []string) int {
+	// --edis is handled separately (it has its own sub-flags).
+	for _, a := range args {
+		if a == "--edis" {
+			rest := make([]string, 0, len(args))
+			for _, b := range args {
+				if b != "--edis" {
+					rest = append(rest, b)
+				}
+			}
+			return runInstallEDIS(rest)
+		}
+	}
+
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	cron := fs.Bool("cron", false, "show (and with --write, install) crontab entries")
 	systemd := fs.Bool("systemd", false, "generate systemd user unit for emily sync --watch")
@@ -36,11 +49,12 @@ func RunInstall(args []string) int {
 	}
 
 	if !*cron {
-		fmt.Fprintln(os.Stderr, "usage: emily install [--cron|--systemd|--system|--iduna-systemd] [--write]")
+		fmt.Fprintln(os.Stderr, "usage: emily install [--cron|--systemd|--system|--iduna-systemd|--edis] [--write]")
 		fmt.Fprintln(os.Stderr, "  --cron            show recommended crontab entries")
 		fmt.Fprintln(os.Stderr, "  --systemd         generate systemd user unit for emily sync --watch")
 		fmt.Fprintln(os.Stderr, "  --system          generate emily-system.service (start on boot: obs-watcher + emily-agent)")
 		fmt.Fprintln(os.Stderr, "  --iduna-systemd   deploy IDUNA systemd user unit from IDUNA/scripts/iduna.service")
+		fmt.Fprintln(os.Stderr, "  --edis            full EDIS stack install (WordPress + nginx + DIS + custodian agent)")
 		fmt.Fprintln(os.Stderr, "  --write           actually install")
 		return 1
 	}
