@@ -80,6 +80,8 @@ func main() {
 		code = cmd.RunContext(rest)
 	case "northstar":
 		code = cmd.RunNorthstar(rest)
+	case "train":
+		code = cmd.RunTrain(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()

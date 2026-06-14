@@ -1,4 +1,6 @@
 ## 2026-06-14
+- feat(train): `emily train` command — build-dataset (runs scripts/prime_directive_dataset.py), upload (DriveUpload via IDUNA EMILY-TRAINING agent), status (lists Drive files + pipeline steps)
+- feat(iduna): DriveUpload, DriveList, DriveGet methods added to internal/iduna/client.go
 - feat(start): emily start --agi enables AGI loop mode; passes --continue to obs-watcher so claude RSI cycles build persistent context across invocations (the AGI loop pattern)
 
 ## 2026-06-13

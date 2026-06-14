@@ -220,6 +220,107 @@ func (c *Client) PostApple(payload ApplePayload) (int64, error) {
 	return result.ID, nil
 }
 
+// DriveFile is one file record from GET /api/v1/drive/files.
+type DriveFile struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	MimeType    string `json:"mime_type"`
+	Size        string `json:"size"`
+	WebViewLink string `json:"web_view_link"`
+	CreatedTime string `json:"created_time"`
+}
+
+// DriveUpload uploads a file to the Drive folder via IDUNA.
+// Returns the created DriveFile on success.
+func (c *Client) DriveUpload(filename, mimeType string, data []byte) (*DriveFile, error) {
+	if err := c.Auth(); err != nil {
+		return nil, err
+	}
+
+	boundary := "----EmilyDriveBoundary7f3a9b"
+	var buf bytes.Buffer
+	buf.WriteString("--" + boundary + "\r\n")
+	fmt.Fprintf(&buf, "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n", filename)
+	fmt.Fprintf(&buf, "Content-Type: %s\r\n\r\n", mimeType)
+	buf.Write(data)
+	buf.WriteString("\r\n--" + boundary + "--\r\n")
+
+	req, _ := http.NewRequest("POST", c.BaseURL+"/api/v1/drive/upload", &buf)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("drive upload: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("drive upload %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+
+	var f DriveFile
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return nil, fmt.Errorf("drive upload decode: %w", err)
+	}
+	return &f, nil
+}
+
+// DriveList fetches the list of files in the configured Drive folder.
+func (c *Client) DriveList() ([]DriveFile, error) {
+	if err := c.Auth(); err != nil {
+		return nil, err
+	}
+	req, _ := http.NewRequest("GET", c.BaseURL+"/api/v1/drive/files", nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("drive list: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("drive list %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+
+	var wrapped struct {
+		Files []DriveFile `json:"files"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err != nil {
+		return nil, fmt.Errorf("drive list decode: %w", err)
+	}
+	return wrapped.Files, nil
+}
+
+// DriveGet fetches metadata for one file by ID.
+func (c *Client) DriveGet(fileID string) (*DriveFile, error) {
+	if err := c.Auth(); err != nil {
+		return nil, err
+	}
+	req, _ := http.NewRequest("GET", c.BaseURL+"/api/v1/drive/files/"+fileID, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("drive get: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("drive file %q not found", fileID)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("drive get %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+
+	var f DriveFile
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return nil, fmt.Errorf("drive get decode: %w", err)
+	}
+	return &f, nil
+}
+
 func filterByType(apples []Apple, appleType string) []Apple {
 	out := apples[:0]
 	for _, a := range apples {
