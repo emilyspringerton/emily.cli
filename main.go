@@ -82,6 +82,8 @@ func main() {
 		code = cmd.RunNorthstar(rest)
 	case "train":
 		code = cmd.RunTrain(rest)
+	case "key":
+		code = cmd.RunKey(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
@@ -375,10 +377,17 @@ Usage:
         State-tracked (EMILY/var/backlog-curated.txt) — idempotent.
         Commits BACKLOG.md and posts a curation Apple to IDUNA.
 
+  emily key set <api-key>
+  emily key show
+  emily key unset
+        Manage ANTHROPIC_API_KEY in EMILY/var/emily-secrets.env.
+        Set once; loaded automatically by all emily commands that call Anthropic APIs.
+
 Environment:
   IDUNA_BASE_URL      IDUNA server (default: http://localhost:8080)
   IDUNA_AGENT_NAME    Agent name (default: EMILY-PRIME)
   IDUNA_AGENT_SECRET  M2M secret (auto-read from IDUNA/var/agent-secrets.env)
+  ANTHROPIC_API_KEY   Anthropic key (auto-read from EMILY/var/emily-secrets.env)
   FATBABY_ROOT        PRRJECT_FATBABY root (default: /home/fatbaby/PRRJECT_FATBABY)
 
 Exit codes: 0=ok 1=usage 2=auth 3=write-failure 4=api-error
