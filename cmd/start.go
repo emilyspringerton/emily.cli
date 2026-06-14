@@ -34,6 +34,7 @@ func RunStart(args []string) int {
 	startAll := fs.Bool("all", false, "also start newssite and FatBaby pipeline processes")
 	withNewssite := fs.Bool("newssite", false, "start the newssite on :8082")
 	dryRun := fs.Bool("dry-run", false, "show what would be started without starting anything")
+	agiLoop := fs.Bool("agi", false, "enable AGI loop mode: obs-watcher passes --continue to claude so RSI cycles build persistent context")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -81,7 +82,9 @@ func RunStart(args []string) int {
 		startFn func(*config.Config, string, bool) (bool, string, error)
 		always  bool
 	}{
-		{"observation-watcher", "observation-watcher", startObservationWatcher, true},
+		{"observation-watcher", "observation-watcher", func(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
+			return startObservationWatcher(cfg, logDir, dryRun, *agiLoop)
+		}, true},
 		{"emily-agent (daemon)", "emily-agent.*--daemon|go run.*emily-agent.*--daemon", startEmilyAgent, true},
 		{"newssite", "go run.*cmd/newssite", startNewssite, false},
 	}
@@ -133,12 +136,17 @@ func pgrepFirst(pattern string) (int, bool) {
 
 // startObservationWatcher launches the observation-watcher Go command detached
 // from the terminal, with stdout+stderr routed to a log file.
-func startObservationWatcher(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
+// When agiLoop is true, --continue is passed to claude so RSI cycles build
+// persistent context across invocations (the AGI loop pattern).
+func startObservationWatcher(cfg *config.Config, logDir string, dryRun bool, agiLoop bool) (bool, string, error) {
 	primeTasksDir := filepath.Join(cfg.EmilyRoot, "signals", "tasks")
 	goArgs := []string{
 		"run", "./cmd/observation-watcher",
 		"--root", cfg.FatBabyRoot,
 		"--prime-tasks", primeTasksDir,
+	}
+	if agiLoop {
+		goArgs = append(goArgs, "--continue")
 	}
 
 	if dryRun {
