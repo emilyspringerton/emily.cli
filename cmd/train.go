@@ -38,6 +38,8 @@ func RunTrain(args []string) int {
 		return runTrainUpload(rest)
 	case "status":
 		return runTrainStatus(rest)
+	case "stats":
+		return runTrainStats(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily train: unknown subcommand %q\n", sub)
 		printTrainUsage()
@@ -52,6 +54,7 @@ Subcommands:
   build-dataset   Build JSONL training corpus from Emily golden docs
   upload <file>   Upload training artifact to Drive via IDUNA
   status          Show Drive files + training pipeline state
+  stats           Show corpus quality stats (token count, source breakdown, Colab estimate)
 
 Flags for build-dataset:
   --emily-root <path>   Path to EMILY repo (default: auto-discover)
@@ -277,6 +280,48 @@ func runTrainStatus(args []string) int {
 	fmt.Printf("    4. convert        python3 scripts/convert_ft_checkpoint.py --checkpoint checkpoint-final\n")
 	fmt.Printf("    5. test           ./gpt2_run weights/emily-ft.bin --entropy-stats\n")
 
+	return 0
+}
+
+func runTrainStats(args []string) int {
+	fs := flag.NewFlagSet("train stats", flag.ContinueOnError)
+	corpus := fs.String("corpus", "/tmp/emily-corpus.jsonl", "path to JSONL corpus")
+	gpt2Root := fs.String("gpt2-root", "", "path to gpt2-alpine-c repo")
+	verbose := fs.Bool("v", false, "show per-source breakdown")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+
+	if *gpt2Root == "" {
+		if cfg.EmilyRoot != "" {
+			*gpt2Root = filepath.Join(filepath.Dir(cfg.EmilyRoot), "gpt2-alpine-c")
+		}
+	}
+
+	scriptPath := filepath.Join(*gpt2Root, "scripts", "corpus_stats.py")
+	if _, err := os.Stat(scriptPath); err != nil {
+		fmt.Fprintf(os.Stderr, "error: corpus_stats.py not found: %s\n", scriptPath)
+		fmt.Fprintln(os.Stderr, "  Set --gpt2-root to the gpt2-alpine-c repo path")
+		return 1
+	}
+
+	cmdArgs := []string{scriptPath, "--corpus", *corpus}
+	if *verbose {
+		cmdArgs = append(cmdArgs, "--verbose")
+	}
+
+	cmd := exec.Command("python3", cmdArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return 1
+	}
 	return 0
 }
 
