@@ -82,6 +82,8 @@ func main() {
 		code = cmd.RunNorthstar(rest)
 	case "train":
 		code = cmd.RunTrain(rest)
+	case "gpt2":
+		code = cmd.RunGPT2(rest)
 	case "key":
 		code = cmd.RunKey(rest)
 	default:
@@ -290,6 +292,22 @@ Examples:
   emily backlog curate --limit 1          # curate only the most recent uncurated obs
   emily backlog curate --dry-run --all    # preview without writing
 `)
+	case "gpt2":
+		fmt.Print(`emily gpt2 — manage the Emily Prime GPT-2 inference stack
+
+Subcommands:
+  emily gpt2 start     [--port N] [--model ft|base] [--dry-run]
+        Start the Python inference server (scripts/serve.py) on :8088.
+  emily gpt2 proxy     [--port N] [--routes path] [--dry-run]
+        Start the FatBaby broker proxy on :8679. Bearer: emily-gpt2-local.
+  emily gpt2 status
+        Show whether serve.py and the broker proxy are running.
+  emily gpt2 tokenizer [--dry-run]
+        Build weights/tokenizer.bin for gpt2_run --prompt mode.
+
+Env:
+  GPT2_ROOT   path to gpt2-alpine-c (default: sibling of EMILY_ROOT)
+`)
 	case "prime-task":
 		fmt.Print(`emily prime-task — write a directed task to EMILY/signals/tasks/
 
@@ -376,6 +394,13 @@ Usage:
         Auto-curate FatBaby observations into EMILY/BACKLOG.md INTAKE QUEUE.
         State-tracked (EMILY/var/backlog-curated.txt) — idempotent.
         Commits BACKLOG.md and posts a curation Apple to IDUNA.
+
+  emily gpt2 start [--model ft|base] [--port N]
+        Start the GPT-2 inference server (serve.py) on :8088.
+  emily gpt2 proxy [--port N]
+        Start the FatBaby broker proxy on :8679 (bearer: emily-gpt2-local).
+  emily gpt2 status
+        Check whether inference server and proxy are running.
 
   emily key set <api-key>
   emily key show
