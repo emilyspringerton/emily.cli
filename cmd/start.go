@@ -32,7 +32,8 @@ func RunStart(args []string) int {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	startIDUNA := fs.Bool("iduna", false, "also start IDUNA via systemctl --user start iduna.service")
 	startAll := fs.Bool("all", false, "also start newssite and FatBaby pipeline processes")
-	withNewssite := fs.Bool("newssite", false, "start the newssite on :8082")
+	withNewssite  := fs.Bool("newssite", false, "start the newssite on :8082")
+	withSignalapi := fs.Bool("signalapi", false, "start signalapi on :9091 (SEC/PR signal reads)")
 	dryRun := fs.Bool("dry-run", false, "show what would be started without starting anything")
 	agiLoop := fs.Bool("agi", false, "enable AGI loop mode: obs-watcher passes --continue to claude so RSI cycles build persistent context")
 
@@ -86,11 +87,14 @@ func RunStart(args []string) int {
 			return startObservationWatcher(cfg, logDir, dryRun, *agiLoop)
 		}, true},
 		{"emily-agent (daemon)", "emily-agent.*--daemon|go run.*emily-agent.*--daemon", startEmilyAgent, true},
-		{"newssite", "go run.*cmd/newssite", startNewssite, false},
+		{"newssite",   "go run.*cmd/newssite",   startNewssite,   false},
+		{"signalapi",  "go run.*cmd/signalapi",  startSignalapi,  false},
 	}
 
 	for _, p := range procs {
-		if !p.always && !*startAll && !(p.name == "newssite" && *withNewssite) {
+		if !p.always && !*startAll &&
+			!(p.name == "newssite" && *withNewssite) &&
+			!(p.name == "signalapi" && *withSignalapi) {
 			continue
 		}
 		fmt.Printf("  %-26s ", p.name)
@@ -115,6 +119,9 @@ func RunStart(args []string) int {
 	}
 	if !*startAll && !*withNewssite && !*dryRun {
 		fmt.Printf("  NOTE: use --newssite or --all to also start the newssite on :8082.\n")
+	}
+	if !*startAll && !*withSignalapi && !*dryRun {
+		fmt.Printf("  NOTE: use --signalapi or --all to also start signalapi on :9091.\n")
 	}
 
 	fmt.Println()
@@ -233,6 +240,37 @@ func startNewssite(cfg *config.Config, logDir string, dryRun bool) (bool, string
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
 		return false, "", fmt.Errorf("start newssite: %w", err)
+	}
+	logFile.Close()
+	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
+}
+
+// startSignalapi launches the signalapi SEC/PR signal reader on :9091.
+func startSignalapi(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
+	goArgs := []string{
+		"run", "./cmd/signalapi",
+		"-addr", ":9091",
+		"-store", "var/secwatch",
+	}
+
+	if dryRun {
+		return false, fmt.Sprintf("[dry-run] go %s  (dir: %s)", strings.Join(goArgs, " "), cfg.FatBabyRoot), nil
+	}
+
+	logPath := filepath.Join(cfg.FatBabyRoot, "var", "logs", "signalapi.log")
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return false, "", fmt.Errorf("open log: %w", err)
+	}
+
+	cmd := exec.Command("go", goArgs...)
+	cmd.Dir = cfg.FatBabyRoot
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return false, "", fmt.Errorf("start signalapi: %w", err)
 	}
 	logFile.Close()
 	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
