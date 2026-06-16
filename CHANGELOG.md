@@ -1,4 +1,5 @@
 ## 2026-06-16
+- feat: emily start --signalapi launches signalapi on :9091 detached
 
 - feat(chat): `emily chat` — terminal Emily Prime chat (haiku, no port); streaming SSE response; dark ANSI UI matching web emily-agent aesthetic; multi-line input via trailing \; --session FILE persists history; loads full-system-context.md when present
 
