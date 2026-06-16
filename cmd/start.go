@@ -183,7 +183,7 @@ func startObservationWatcher(cfg *config.Config, logDir string, dryRun bool, agi
 // IDUNA credentials are wired from cfg into the child process environment.
 func startEmilyAgent(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
 	agentDir := filepath.Join(cfg.EmilyRoot, "emily-agent")
-	goArgs := []string{"run", "main.go", "rsi.go", "cron.go", "iduna.go", "--", "--daemon"}
+	goArgs := []string{"run", ".", "--", "--daemon"}
 
 	if dryRun {
 		return false, fmt.Sprintf("[dry-run] go %s  (dir: %s)", strings.Join(goArgs, " "), agentDir), nil
