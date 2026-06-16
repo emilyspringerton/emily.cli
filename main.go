@@ -86,6 +86,8 @@ func main() {
 		code = cmd.RunGPT2(rest)
 	case "key":
 		code = cmd.RunKey(rest)
+	case "chat":
+		code = cmd.RunChat(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
@@ -292,6 +294,27 @@ Examples:
   emily backlog curate --limit 1          # curate only the most recent uncurated obs
   emily backlog curate --dry-run --all    # preview without writing
 `)
+	case "chat":
+		fmt.Print(`emily chat — terminal chat interface for Emily Prime (FatBaby mode)
+
+Calls claude-haiku directly. No port, no server. API key from emily key set or ANTHROPIC_API_KEY env.
+
+Usage:
+  emily chat [--model MODEL] [--session FILE]
+
+Flags:
+  --model    Anthropic model (default: claude-haiku-4-5-20251001)
+  --session  JSON file to persist/restore conversation history across sessions
+
+Controls:
+  exit / quit / q    end session
+  clear              clear screen
+  history            show turn count
+  \\ at end of line   multi-line input continuation
+  Ctrl+C             force exit
+
+Loads EMILY/context/full-system-context.md as system context when present (emily context build).
+`)
 	case "gpt2":
 		fmt.Print(`emily gpt2 — manage the Emily Prime GPT-2 inference stack
 
@@ -394,6 +417,10 @@ Usage:
         Auto-curate FatBaby observations into EMILY/BACKLOG.md INTAKE QUEUE.
         State-tracked (EMILY/var/backlog-curated.txt) — idempotent.
         Commits BACKLOG.md and posts a curation Apple to IDUNA.
+
+  emily chat [--model MODEL] [--session FILE]
+        Terminal chat with Emily Prime (haiku). No port needed — calls Anthropic directly.
+        Requires: emily key set <api-key>. Loads full-system-context.md when present.
 
   emily gpt2 start [--model ft|base] [--port N]
         Start the GPT-2 inference server (serve.py) on :8088.

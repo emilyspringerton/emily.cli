@@ -1,3 +1,7 @@
+## 2026-06-16
+
+- feat(chat): `emily chat` — terminal Emily Prime chat (haiku, no port); streaming SSE response; dark ANSI UI matching web emily-agent aesthetic; multi-line input via trailing \; --session FILE persists history; loads full-system-context.md when present
+
 ## 2026-06-15
 
 - emily gpt2 start|proxy|status|tokenizer — manage GPT-2 inference stack and FatBaby broker proxy
