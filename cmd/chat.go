@@ -276,7 +276,6 @@ func (s *chatSession) streamReply(userMsg string) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", s.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("anthropic-beta", "")
 
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
