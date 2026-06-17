@@ -13,8 +13,12 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +44,10 @@ func RunGPT2(args []string) int {
 		return runGPT2Status(rest)
 	case "tokenizer":
 		return runGPT2Tokenizer(rest)
+	case "generate", "gen":
+		return runGPT2Generate(rest)
+	case "health":
+		return runGPT2Health(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily gpt2: unknown subcommand %q\n", sub)
 		printGPT2Usage()
@@ -262,6 +270,148 @@ func runGPT2Tokenizer(args []string) int {
 	return 0
 }
 
+// runGPT2Generate calls POST /generate on the inference server and prints the result.
+func runGPT2Generate(args []string) int {
+	fs := flag.NewFlagSet("gpt2 generate", flag.ContinueOnError)
+	prompt  := fs.String("prompt", "Emily Prime:", "prompt text to send")
+	maxTok  := fs.Int("max-tokens", 100, "maximum tokens to generate")
+	temp    := fs.Float64("temperature", 0.8, "sampling temperature")
+	via     := fs.String("via", "server", "endpoint: server (:8088) | emily (:8086 emily-agent) | proxy (:8679)")
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	// remaining positional args are the prompt
+	if rest := fs.Args(); len(rest) > 0 {
+		joined := rest[0]
+		for _, w := range rest[1:] {
+			joined += " " + w
+		}
+		*prompt = joined
+	}
+
+	var endpoint string
+	var headers map[string]string
+	switch *via {
+	case "emily":
+		endpoint = "http://localhost:8086/api/v1/gpt2/generate"
+	case "proxy":
+		endpoint = "http://localhost:8679/generate"
+		headers = map[string]string{"Authorization": "Bearer emily-gpt2-local"}
+	default: // "server"
+		endpoint = "http://localhost:8088/generate"
+	}
+
+	fmt.Printf("\n◈ EMILY OS — GPT-2 GENERATE | %s\n\n", time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Printf("  endpoint:    %s\n  prompt:      %q\n  max_tokens:  %d\n  temperature: %.2f\n\n",
+		endpoint, *prompt, *maxTok, *temp)
+
+	reqBody, _ := json.Marshal(map[string]any{
+		"prompt":      *prompt,
+		"max_tokens":  *maxTok,
+		"temperature": *temp,
+	})
+	req, _ := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  ✗ request failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  hint: emily gpt2 start\n\n")
+		return 1
+	}
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "  ✗ server returned %d: %s\n\n", resp.StatusCode, raw)
+		return 1
+	}
+
+	var out struct {
+		Text   string `json:"text"`
+		Tokens int    `json:"tokens"`
+		Model  string `json:"model"`
+		Error  string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		// print raw if not JSON
+		fmt.Printf("  %s\n\n", raw)
+		return 0
+	}
+	if out.Error != "" {
+		fmt.Fprintf(os.Stderr, "  ✗ %s\n\n", out.Error)
+		return 1
+	}
+	fmt.Printf("  model:   %s\n  tokens:  %d\n\n", out.Model, out.Tokens)
+	fmt.Printf("  ── output ──────────────────────────────────────────────\n")
+	fmt.Printf("  %s%s\n", *prompt, out.Text)
+	fmt.Printf("  ────────────────────────────────────────────────────────\n\n")
+	return 0
+}
+
+// runGPT2Health hits the inference server and proxy health endpoints and reports status.
+func runGPT2Health(args []string) int {
+	fmt.Printf("\n◈ EMILY OS — GPT-2 HEALTH | %s\n\n", time.Now().Format("2006-01-02 15:04:05"))
+	client := &http.Client{Timeout: 5 * time.Second}
+	exitCode := 0
+
+	type check struct {
+		name string
+		url  string
+	}
+	checks := []check{
+		{"gpt2-serve  (:8088)", "http://localhost:8088/health"},
+		{"emily-agent (:8086)", "http://localhost:8086/api/v1/gpt2/health"},
+	}
+
+	for _, c := range checks {
+		resp, err := client.Get(c.url)
+		if err != nil {
+			fmt.Printf("  %-28s ✗ unreachable — %v\n", c.name, err)
+			exitCode = 1
+			continue
+		}
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			// extract model field if present
+			var body map[string]any
+			json.Unmarshal(raw, &body)
+			model, _ := body["model"].(string)
+			if model != "" {
+				fmt.Printf("  %-28s ✓ ok  model=%s\n", c.name, model)
+			} else {
+				fmt.Printf("  %-28s ✓ ok\n", c.name)
+			}
+		} else {
+			fmt.Printf("  %-28s ✗ %d  %s\n", c.name, resp.StatusCode, raw)
+			exitCode = 1
+		}
+	}
+
+	// broker proxy — just check port reachability
+	proxyResp, err := client.Get("http://localhost:8679/health")
+	if err != nil {
+		fmt.Printf("  %-28s ✗ unreachable (start with: emily gpt2 proxy)\n", "gpt2-proxy  (:8679)")
+		exitCode = 1
+	} else {
+		proxyResp.Body.Close()
+		if proxyResp.StatusCode < 500 {
+			fmt.Printf("  %-28s ✓ listening\n", "gpt2-proxy  (:8679)")
+		} else {
+			fmt.Printf("  %-28s ✗ %d\n", "gpt2-proxy  (:8679)", proxyResp.StatusCode)
+			exitCode = 1
+		}
+	}
+
+	fmt.Println()
+	return exitCode
+}
+
 // pgrepPat returns the pattern, first PID, and whether any match is alive.
 func pgrepPat(pattern string) (string, int, bool) {
 	out, err := exec.Command("pgrep", "-f", pattern).Output()
@@ -290,31 +440,35 @@ func printGPT2Usage() {
 Subcommands:
   emily gpt2 start     [--port N] [--model ft|base] [--dry-run]
         Start the Python inference server (scripts/serve.py) on :8088.
-        Loads the fine-tuned HF checkpoint once; keeps it hot in memory.
 
   emily gpt2 proxy     [--port N] [--routes path] [--dry-run]
         Start the FatBaby broker proxy on :8679 routing to :8088.
-        Requires bearer token: Authorization: Bearer emily-gpt2-local
+        Bearer token: emily-gpt2-local
+
+  emily gpt2 generate  [--prompt "..."] [--max-tokens N] [--temperature F] [--via server|emily|proxy]
+        Call the GPT-2 inference server and print the generated text.
+        --via server  (default) hits :8088 directly
+        --via emily   hits emily-agent :8086/api/v1/gpt2/generate
+        --via proxy   hits broker :8679 with bearer token
+
+  emily gpt2 health
+        HTTP health check of :8088, :8086/api/v1/gpt2/health, and :8679.
 
   emily gpt2 status
-        Show whether serve.py and the broker are running.
+        Show whether serve.py and the broker are running (pgrep).
 
   emily gpt2 tokenizer [--dry-run]
         Build weights/tokenizer.bin (required for gpt2_run --prompt mode).
-        Runs: make tokenizer in the gpt2-alpine-c repo.
 
 Env:
   GPT2_ROOT   path to gpt2-alpine-c (default: sibling of EMILY_ROOT)
 
 Examples:
-  emily gpt2 start                   # inference server on :8088
-  emily gpt2 proxy                   # broker proxy on :8679
-  emily gpt2 status                  # check both processes
-  emily gpt2 start --model base      # base GPT-2 instead of fine-tuned
-
-  # Hit the proxy:
-  curl -X POST http://localhost:8679/generate \
-    -H 'Authorization: Bearer emily-gpt2-local' \
-    -d '{"prompt": "Emily Prime:", "max_tokens": 100}'
+  emily gpt2 start                              # inference server on :8088
+  emily gpt2 proxy                              # broker proxy on :8679
+  emily gpt2 generate --prompt "Emily Prime:"   # hit :8088 directly
+  emily gpt2 generate --via emily "What is RSI?" # hit emily-agent proxy
+  emily gpt2 health                             # check all endpoints
+  emily gpt2 status                             # check processes
 `)
 }

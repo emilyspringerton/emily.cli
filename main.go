@@ -323,6 +323,10 @@ Subcommands:
         Start the Python inference server (scripts/serve.py) on :8088.
   emily gpt2 proxy     [--port N] [--routes path] [--dry-run]
         Start the FatBaby broker proxy on :8679. Bearer: emily-gpt2-local.
+  emily gpt2 generate  [--prompt "..."] [--max-tokens N] [--via server|emily|proxy]
+        Call the GPT-2 endpoint and print generated text.
+  emily gpt2 health
+        HTTP health check of :8088, emily-agent :8086, and proxy :8679.
   emily gpt2 status
         Show whether serve.py and the broker proxy are running.
   emily gpt2 tokenizer [--dry-run]
