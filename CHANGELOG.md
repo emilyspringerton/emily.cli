@@ -1,3 +1,7 @@
+## 2026-06-17
+
+- emily gpt2 generate (POST :8088/generate, --via server|emily|proxy) + emily gpt2 health (HTTP check :8088/:8086/:8679). Apple #945.
+
 ## 2026-06-16
 - feat: emily start --signalapi launches signalapi on :9091 detached
 
