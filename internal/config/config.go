@@ -19,6 +19,7 @@ type Config struct {
 	AnthropicKey     string
 	FatBabyRoot      string
 	EmilyRoot        string
+	ShankpitRoot     string
 	SecretsFile      string
 	EmilySecretsFile string
 }
@@ -34,6 +35,7 @@ func Resolve() (*Config, error) {
 		IDUNAAgentName:   envOr("IDUNA_AGENT_NAME", "EMILY-PRIME"),
 		FatBabyRoot:      envOr("FATBABY_ROOT", "/home/fatbaby/PRRJECT_FATBABY"),
 		EmilyRoot:        emilyRoot,
+		ShankpitRoot:     envOr("SHANKPIT_ROOT", "/home/fatbaby/SHANKPIT"),
 		SecretsFile:      envOr("IDUNA_SECRETS", "/home/fatbaby/IDUNA/var/agent-secrets.env"),
 		EmilySecretsFile: envOr("EMILY_SECRETS", emilyRoot+"/var/emily-secrets.env"),
 	}

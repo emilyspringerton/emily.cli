@@ -34,6 +34,8 @@ func RunStart(args []string) int {
 	startAll := fs.Bool("all", false, "also start newssite and FatBaby pipeline processes")
 	withNewssite  := fs.Bool("newssite", false, "start the newssite on :8082")
 	withSignalapi := fs.Bool("signalapi", false, "start signalapi on :9091 (SEC/PR signal reads)")
+	withShankpit  := fs.Bool("shankpit", false, "start shank_go_server on :6969 + emily-bot fill players")
+	botCount      := fs.Int("bots", 2, "number of emily-bot fill players to launch with --shankpit")
 	dryRun := fs.Bool("dry-run", false, "show what would be started without starting anything")
 	agiLoop := fs.Bool("agi", false, "enable AGI loop mode: obs-watcher passes --continue to claude so RSI cycles build persistent context")
 
@@ -87,14 +89,16 @@ func RunStart(args []string) int {
 			return startObservationWatcher(cfg, logDir, dryRun, *agiLoop)
 		}, true},
 		{"emily-agent (daemon)", "emily-agent.*--daemon|go run.*emily-agent.*--daemon", startEmilyAgent, true},
-		{"newssite",   "go run.*cmd/newssite",   startNewssite,   false},
-		{"signalapi",  "go run.*cmd/signalapi",  startSignalapi,  false},
+		{"newssite",        "go run.*cmd/newssite",   startNewssite,   false},
+		{"signalapi",       "go run.*cmd/signalapi",  startSignalapi,  false},
+		{"shank_go_server", "shank_go_server",         startShankpit,   false},
 	}
 
 	for _, p := range procs {
 		if !p.always && !*startAll &&
 			!(p.name == "newssite" && *withNewssite) &&
-			!(p.name == "signalapi" && *withSignalapi) {
+			!(p.name == "signalapi" && *withSignalapi) &&
+			!(p.name == "shank_go_server" && *withShankpit) {
 			continue
 		}
 		fmt.Printf("  %-26s ", p.name)
@@ -114,6 +118,28 @@ func RunStart(args []string) int {
 		}
 	}
 
+	// After the server is up, launch fill bots with a short delay so the
+	// server socket is listening before they try to connect.
+	if *withShankpit && *botCount > 0 {
+		if !*dryRun {
+			time.Sleep(1500 * time.Millisecond)
+		}
+		for i := 0; i < *botCount; i++ {
+			fmt.Printf("  %-26s ", fmt.Sprintf("emily-bot[%d]", i))
+			started, note, err2 := startEmilyBot(cfg, logDir, *dryRun, i)
+			if err2 != nil {
+				fmt.Printf("ERROR: %v\n", err2)
+			} else if started {
+				fmt.Printf("started — %s\n", note)
+			} else {
+				fmt.Println(note)
+			}
+			if !*dryRun && i < *botCount-1 {
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+	}
+
 	if !*startIDUNA && !*dryRun {
 		fmt.Printf("\n  NOTE: use --iduna to also manage IDUNA. Agents will degrade gracefully if IDUNA is offline.\n")
 	}
@@ -122,6 +148,9 @@ func RunStart(args []string) int {
 	}
 	if !*startAll && !*withSignalapi && !*dryRun {
 		fmt.Printf("  NOTE: use --signalapi or --all to also start signalapi on :9091.\n")
+	}
+	if !*withShankpit && !*dryRun {
+		fmt.Printf("  NOTE: use --shankpit to also start SHANKPIT server + %d emily-bot fill players.\n", *botCount)
 	}
 
 	fmt.Println()
@@ -277,6 +306,84 @@ func startSignalapi(cfg *config.Config, logDir string, dryRun bool) (bool, strin
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
 		return false, "", fmt.Errorf("start signalapi: %w", err)
+	}
+	logFile.Close()
+	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
+}
+
+// startShankpit builds (if needed) and launches shank_go_server on :6969.
+// Uses the prebuilt binary at SHANKPIT/bin/shank_go_server when present;
+// builds with GOWORK=off otherwise. Logs to EMILY/var/logs/shankpit.log.
+func startShankpit(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
+	binPath := filepath.Join(cfg.ShankpitRoot, "bin", "shank_go_server")
+
+	if dryRun {
+		return false, fmt.Sprintf("[dry-run] %s  (dir: %s)", binPath, cfg.ShankpitRoot), nil
+	}
+
+	// Build if binary is missing.
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		buildCmd := exec.Command("go", "build", "-o", binPath, "./apps2/server-go/")
+		buildCmd.Dir = cfg.ShankpitRoot
+		buildCmd.Env = append(os.Environ(), "GOWORK=off")
+		if out, err2 := buildCmd.CombinedOutput(); err2 != nil {
+			return false, "", fmt.Errorf("build shank_go_server: %w\n%s", err2, out)
+		}
+	}
+
+	logPath := filepath.Join(logDir, "shankpit.log")
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return false, "", fmt.Errorf("open log: %w", err)
+	}
+
+	cmd := exec.Command(binPath)
+	cmd.Dir = cfg.ShankpitRoot
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return false, "", fmt.Errorf("start shank_go_server: %w", err)
+	}
+	logFile.Close()
+	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
+}
+
+// startEmilyBot launches one emily-bot fill player against the local game server.
+// Uses the prebuilt binary at SHANKPIT/bin/emily-bot; builds it if absent.
+// idx is used to stagger log file names (emily-bot-0.log, emily-bot-1.log, ...).
+func startEmilyBot(cfg *config.Config, logDir string, dryRun bool, idx int) (bool, string, error) {
+	binPath := filepath.Join(cfg.ShankpitRoot, "bin", "emily-bot")
+
+	if dryRun {
+		return false, fmt.Sprintf("[dry-run] %s -host 127.0.0.1 -port 6969", binPath), nil
+	}
+
+	// Build if binary is missing.
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		buildCmd := exec.Command("go", "build", "-o", binPath, "./apps2/emily-bot/")
+		buildCmd.Dir = cfg.ShankpitRoot
+		buildCmd.Env = append(os.Environ(), "GOWORK=off")
+		if out, err2 := buildCmd.CombinedOutput(); err2 != nil {
+			return false, "", fmt.Errorf("build emily-bot: %w\n%s", err2, out)
+		}
+	}
+
+	logPath := filepath.Join(logDir, fmt.Sprintf("emily-bot-%d.log", idx))
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return false, "", fmt.Errorf("open log: %w", err)
+	}
+
+	cmd := exec.Command(binPath, "-host", "127.0.0.1", "-port", "6969")
+	cmd.Dir = cfg.ShankpitRoot
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return false, "", fmt.Errorf("start emily-bot[%d]: %w", idx, err)
 	}
 	logFile.Close()
 	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
