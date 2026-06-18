@@ -90,6 +90,8 @@ func main() {
 		code = cmd.RunChat(rest)
 	case "shankpit":
 		code = cmd.RunShankpit(rest)
+	case "gsync":
+		code = cmd.RunGSync(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
@@ -364,6 +366,36 @@ Examples:
     "entity-graph parser misses director names with Jr. suffix"
   emily prime-task --dry-run "preview task without writing"
 `)
+	case "gsync":
+		fmt.Print(`emily gsync — sync git repo(s) to Google Drive
+
+Archives each repo with git archive and uploads the .tar.gz to the
+Google Drive folder configured in IDUNA (GOOGLE_DRIVE_FOLDER_ID).
+
+Usage:
+  emily gsync SHANKPIT
+  emily gsync SHANKPIT EMILY GoblinFoxDragon
+  emily gsync --dry-run SHANKPIT
+
+If a repo is not at /home/fatbaby/REPO it is cloned from
+  git@github.com:emilyspringerton/REPO  (--org to override)
+
+Archive name: REPO-YYYYMMDD-HHmmss.tar.gz
+Upload target: Google Drive folder set by GOOGLE_DRIVE_FOLDER_ID on IDUNA
+
+Requires IDUNA running with:
+  GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON  (service account key JSON)
+  GOOGLE_DRIVE_FOLDER_ID             (target folder; MyDrive root if empty)
+
+Flags:
+  --dry-run   archive but do not upload
+  --org STR   GitHub org for clone URLs (default: emilyspringerton)
+
+Env:
+  IDUNA_BASE_URL    IDUNA server (default http://localhost:8080)
+  IDUNA_AGENT_NAME  agent identity
+  IDUNA_AGENT_SECRET M2M credential
+`)
 	case "shankpit":
 		fmt.Print(`emily shankpit — SHANKPIT game server admin + observability
 
@@ -453,6 +485,13 @@ Usage:
         Start the FatBaby broker proxy on :8679 (bearer: emily-gpt2-local).
   emily gpt2 status
         Check whether inference server and proxy are running.
+
+  emily gsync REPO [REPO ...]
+        Clone (if needed) + git archive → upload to Google Drive via IDUNA.
+        e.g. emily gsync SHANKPIT  or  emily gsync SHANKPIT EMILY GoblinFoxDragon
+        Uses git@github.com:emilyspringerton/<REPO> as clone URL.
+        Requires IDUNA running with GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON configured.
+        --dry-run: archive but skip upload.
 
   emily shankpit status
         SHANKPIT game server status: players online, scenes, uptime.
