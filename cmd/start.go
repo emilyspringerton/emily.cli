@@ -337,7 +337,12 @@ func startShankpit(cfg *config.Config, logDir string, dryRun bool) (bool, string
 		return false, "", fmt.Errorf("open log: %w", err)
 	}
 
-	cmd := exec.Command(binPath)
+	adminToken := os.Getenv("SHANKPIT_ADMIN_TOKEN")
+	args := []string{"--admin-port", "6970"}
+	if adminToken != "" {
+		args = append(args, "--admin-token", adminToken)
+	}
+	cmd := exec.Command(binPath, args...)
 	cmd.Dir = cfg.ShankpitRoot
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -347,7 +352,7 @@ func startShankpit(cfg *config.Config, logDir string, dryRun bool) (bool, string
 		return false, "", fmt.Errorf("start shank_go_server: %w", err)
 	}
 	logFile.Close()
-	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
+	return true, fmt.Sprintf("pid %d → %s (admin :6970)", cmd.Process.Pid, logPath), nil
 }
 
 // startEmilyBot launches one emily-bot fill player against the local game server.

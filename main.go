@@ -88,6 +88,8 @@ func main() {
 		code = cmd.RunKey(rest)
 	case "chat":
 		code = cmd.RunChat(rest)
+	case "shankpit":
+		code = cmd.RunShankpit(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
@@ -362,6 +364,25 @@ Examples:
     "entity-graph parser misses director names with Jr. suffix"
   emily prime-task --dry-run "preview task without writing"
 `)
+	case "shankpit":
+		fmt.Print(`emily shankpit — SHANKPIT game server admin + observability
+
+Subcommands:
+  status              current server state (players, scenes, uptime)
+  players             list all connected players with position
+  kick <id>           disconnect player by client ID
+  observe             file an Emily observation from server state
+  restart             graceful server restart (SIGTERM + relaunch)
+
+Flags:
+  --admin-url   admin HTTP base URL (default http://localhost:6970)
+                overridden by SHANKPIT_ADMIN_URL env var
+  --token       Bearer token for write ops
+                overridden by SHANKPIT_ADMIN_TOKEN env var
+
+The admin server runs on :6970 alongside the UDP game server on :6969.
+Start server: ./server-go --admin-port 6970 [--admin-token mytoken]
+`)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: no help for %q — try: emily help\n", command)
 		return 1
@@ -432,6 +453,17 @@ Usage:
         Start the FatBaby broker proxy on :8679 (bearer: emily-gpt2-local).
   emily gpt2 status
         Check whether inference server and proxy are running.
+
+  emily shankpit status
+        SHANKPIT game server status: players online, scenes, uptime.
+  emily shankpit players
+        List connected players with position and scene.
+  emily shankpit kick <id>
+        Disconnect a player by client ID (requires --token or SHANKPIT_ADMIN_TOKEN).
+  emily shankpit observe
+        File an Emily observation from current server state.
+  emily shankpit restart
+        SIGTERM + relaunch SHANKPIT server via emily start --shankpit.
 
   emily key set <api-key>
   emily key show
