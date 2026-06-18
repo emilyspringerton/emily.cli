@@ -232,8 +232,14 @@ func startNewssite(cfg *config.Config, logDir string, dryRun bool) (bool, string
 		return false, "", fmt.Errorf("open log: %w", err)
 	}
 
+	env := os.Environ()
+	if os.Getenv("EMILY_BASE_URL") == "" {
+		env = append(env, "EMILY_BASE_URL=http://localhost:8086")
+	}
+
 	cmd := exec.Command("go", goArgs...)
 	cmd.Dir = cfg.FatBabyRoot
+	cmd.Env = env
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
