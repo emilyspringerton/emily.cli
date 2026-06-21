@@ -1,3 +1,7 @@
+## 2026-06-21
+
+- feat: S47-04 emily emilyos command — wraps EmilyOS CLI (Apple #2336)
+
 ## 2026-06-18
 - feat: emily gsync — git archive + Google Drive upload via IDUNA; emily gsync SHANKPIT uploads SHANKPIT.tar.gz to configured Drive folder (Apple #1437)
 - feat: S42-A emily shankpit command — status/players/kick/observe/restart; auto-start admin on emily start --shankpit (Apple #1435)
