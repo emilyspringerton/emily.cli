@@ -1,4 +1,5 @@
 ## 2026-06-21
+- feat: S49-02 emily status shows EmilyOS posture (Apple #2347)
 - feat: S48-02 emily shankpit leaderboard command (Apple #2341)
 
 - feat: S47-04 emily emilyos command — wraps EmilyOS CLI (Apple #2336)
