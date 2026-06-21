@@ -170,6 +170,16 @@ func RunStatus(args []string) int {
 		}
 	}
 
+	// EmilyOS posture (best-effort via emily-agent API)
+	agentURL := os.Getenv("EMILY_AGENT_URL")
+	if p, blocked, err := fetchPostureFromAgent(agentURL); err == nil {
+		label := p
+		if blocked {
+			label = p + " (LLM blocked)"
+		}
+		fmt.Printf("  POSTURE: %s\n", label)
+	}
+
 	printProcesses(collectProcesses(cfg))
 	if *fatbaby {
 		printProcesses(collectFatBabyProcesses(cfg))
@@ -178,6 +188,30 @@ func RunStatus(args []string) int {
 	fmt.Println("\n──────────────────────────────────────────────────────")
 	fmt.Println()
 	return 0
+}
+
+// fetchPostureFromAgent queries the emily-agent posture endpoint.
+func fetchPostureFromAgent(agentURL string) (posture string, llmBlocked bool, err error) {
+	if agentURL == "" {
+		agentURL = "http://localhost:8086"
+	}
+	hc := &http.Client{Timeout: 2 * time.Second}
+	resp, err := hc.Get(strings.TrimRight(agentURL, "/") + "/api/v1/emily/posture")
+	if err != nil {
+		return "", false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", false, fmt.Errorf("agent returned %d", resp.StatusCode)
+	}
+	var body struct {
+		Posture    string `json:"posture"`
+		LLMBlocked bool   `json:"llm_blocked"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", false, err
+	}
+	return body.Posture, body.LLMBlocked, nil
 }
 
 func runStatusWatch(cfg *config.Config, noGit, noIDUNA bool, intervalSec int, fatbaby bool) int {
