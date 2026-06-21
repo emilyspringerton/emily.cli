@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/emilyspringerton/emily-cli/internal/config"
 )
 
 // RunShankpit is the entry point for `emily shankpit <subcommand>`.
@@ -73,6 +75,14 @@ Flags:
 		return c.runObserve()
 	case "restart":
 		return runShankpitRestart()
+	case "leaderboard":
+		limitN := 10
+		if len(rest) >= 2 {
+			if n, err := strconv.Atoi(rest[1]); err == nil && n > 0 {
+				limitN = n
+			}
+		}
+		return runLeaderboard(limitN)
 	default:
 		fmt.Fprintf(os.Stderr, "emily shankpit: unknown subcommand %q\n", sub)
 		fs.Usage()
@@ -245,5 +255,64 @@ func runShankpitRestart() int {
 		return 1
 	}
 	fmt.Println("SHANKPIT server relaunching.")
+	return 0
+}
+
+// runLeaderboard queries IDUNA for top players and renders a formatted table.
+func runLeaderboard(limit int) int {
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+
+	url := fmt.Sprintf("%s/api/v1/players?sort=kills&limit=%d", cfg.IDUNABaseURL, limit)
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	if cfg.IDUNAAgentSecret != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.IDUNAAgentSecret)
+	}
+	hc := &http.Client{Timeout: 10 * time.Second}
+	resp, err := hc.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "leaderboard: %v\n", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Fprintf(os.Stderr, "leaderboard: IDUNA %d: %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+		return 1
+	}
+
+	type entry struct {
+		PlayerID    string  `json:"player_id"`
+		DisplayName string  `json:"display_name"`
+		Kills       int     `json:"kills"`
+		Deaths      int     `json:"deaths"`
+		Sessions    int     `json:"sessions"`
+		KDRatio     float64 `json:"kd_ratio"`
+	}
+	var players []entry
+	if err := json.NewDecoder(resp.Body).Decode(&players); err != nil {
+		fmt.Fprintf(os.Stderr, "leaderboard: decode: %v\n", err)
+		return 1
+	}
+
+	if len(players) == 0 {
+		fmt.Println("No players registered yet.")
+		return 0
+	}
+
+	fmt.Printf("\n%-4s  %-20s  %6s  %6s  %4s  %6s\n", "Rank", "Player", "Kills", "Deaths", "K/D", "Games")
+	fmt.Println(strings.Repeat("─", 55))
+	for i, p := range players {
+		name := p.DisplayName
+		if len(name) > 20 {
+			name = name[:17] + "..."
+		}
+		fmt.Printf("%-4d  %-20s  %6d  %6d  %4.1f  %6d\n",
+			i+1, name, p.Kills, p.Deaths, p.KDRatio, p.Sessions)
+	}
+	fmt.Println()
 	return 0
 }
