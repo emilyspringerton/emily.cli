@@ -92,6 +92,8 @@ func main() {
 		code = cmd.RunShankpit(rest)
 	case "gsync":
 		code = cmd.RunGSync(rest)
+	case "emilyos":
+		code = cmd.RunEmilyOS(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
@@ -415,6 +417,25 @@ Flags:
 The admin server runs on :6970 alongside the UDP game server on :6969.
 Start server: ./server-go --admin-port 6970 [--admin-token mytoken]
 `)
+	case "emilyos":
+		fmt.Print(`emily emilyos — EmilyOS policy kernel interface
+
+Subcommands:
+  posture get                 print current posture state
+  posture set <STATE>         transition posture (NORMAL/SIEGE/MERCY/INCIDENT/GAME/EXITED)
+  verb <verb> <object>        dispatch verb with capability check
+  audit tail [-n N]           tail recent audit events
+  audit verify                verify HMAC chain integrity (exit 3 if tampered)
+  audit export <outdir>       SOC 2 evidence export (audit.jsonl + manifest.json)
+
+Env vars used (passed through):
+  EMILY_POSTURE_PATH    default: var/posture.json
+  EMILY_AUDIT_PATH      default: var/audit.jsonl
+  EMILY_ACTOR_ID        actor for audit attribution
+  EMILY_ROLE            role for capability check (operator|admin|auditor)
+
+Exit codes: 0=ok, 1=error, 2=policy deny, 3=chain tampered
+`)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: no help for %q — try: emily help\n", command)
 		return 1
@@ -509,6 +530,12 @@ Usage:
   emily key unset
         Manage ANTHROPIC_API_KEY in EMILY/var/emily-secrets.env.
         Set once; loaded automatically by all emily commands that call Anthropic APIs.
+
+  emily emilyos posture get|set <STATE>
+  emily emilyos audit tail|verify|export <outdir>
+  emily emilyos verb <verb> <object>
+        EmilyOS policy kernel interface (wraps emilyos binary).
+        'emily help emilyos' for full reference.
 
 Environment:
   IDUNA_BASE_URL      IDUNA server (default: http://localhost:8080)
