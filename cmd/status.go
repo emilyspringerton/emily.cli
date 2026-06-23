@@ -180,6 +180,11 @@ func RunStatus(args []string) int {
 		fmt.Printf("  POSTURE: %s\n", label)
 	}
 
+	// THE_FIELD archetype engine status (best-effort)
+	if reachable, corridor, spirits := fetchArchetypeStatusFromAgent(agentURL); reachable {
+		fmt.Printf("  ARCHETYPE ENGINE: online | last_corridor=%s | spirits=%s\n", corridor, spirits)
+	}
+
 	printProcesses(collectProcesses(cfg))
 	if *fatbaby {
 		printProcesses(collectFatBabyProcesses(cfg))
@@ -188,6 +193,34 @@ func RunStatus(args []string) int {
 	fmt.Println("\n──────────────────────────────────────────────────────")
 	fmt.Println()
 	return 0
+}
+
+// fetchArchetypeStatusFromAgent queries the emily-agent archetype status proxy.
+// Returns (reachable, resonance_corridor, active_spirit_names).
+func fetchArchetypeStatusFromAgent(agentURL string) (reachable bool, corridor, spirits string) {
+	if agentURL == "" {
+		agentURL = "http://localhost:8086"
+	}
+	hc := &http.Client{Timeout: 2 * time.Second}
+	resp, err := hc.Get(strings.TrimRight(agentURL, "/") + "/api/v1/emily/archetype/status")
+	if err != nil {
+		return false, "", ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, "", ""
+	}
+	var body struct {
+		Reachable bool   `json:"reachable"`
+		Status    string `json:"status"`
+		E1Model   string `json:"e1_model"`
+		E2Model   string `json:"e2_model"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || !body.Reachable {
+		return false, "", ""
+	}
+	spiritsStr := body.E1Model + "/" + body.E2Model
+	return true, "—", spiritsStr
 }
 
 // fetchPostureFromAgent queries the emily-agent posture endpoint.
