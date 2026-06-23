@@ -1,3 +1,7 @@
+## 2026-06-23
+
+- S103-03: emily status shows ARCHETYPE ENGINE online/offline via emily-agent proxy
+
 ## 2026-06-21
 - feat: S49-02 emily status shows EmilyOS posture (Apple #2347)
 - feat: S48-02 emily shankpit leaderboard command (Apple #2341)
