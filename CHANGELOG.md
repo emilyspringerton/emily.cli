@@ -1,3 +1,7 @@
+## 2026-06-24
+
+- feat: S126-05 emily memory digest command — prints obs digest in TUI format (Apple #3541)
+
 ## 2026-06-23
 
 - S103-03: emily status shows ARCHETYPE ENGINE online/offline via emily-agent proxy
