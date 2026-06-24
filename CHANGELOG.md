@@ -1,4 +1,5 @@
 ## 2026-06-24
+- feat: S125-08 emily memory consolidate — merge *.json fragments → consolidated.json (Apple #3667)
 
 - feat: S126-05 emily memory digest command — prints obs digest in TUI format (Apple #3541)
 
