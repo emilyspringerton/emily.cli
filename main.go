@@ -92,6 +92,8 @@ func main() {
 		code = cmd.RunShankpit(rest)
 	case "gsync":
 		code = cmd.RunGSync(rest)
+	case "memory":
+		code = cmd.RunMemory(rest)
 	case "emilyos":
 		code = cmd.RunEmilyOS(rest)
 	default:
