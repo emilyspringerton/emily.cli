@@ -1,0 +1,129 @@
+name: emily.cli CI
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+concurrency:
+  group: emily-cli-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test_build_construct:
+    name: 🔨 Test, Build & Construct
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Go Tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./...
+
+      - name: Build emily binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build -trimpath -ldflags="-s -w" -o emily .
+          ./emily --version
+
+      - name: Smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # version check
+          VERSION=$(./emily --version 2>&1)
+          if [[ "$VERSION" != emily\ * ]]; then
+            echo "FAIL: --version output unexpected: $VERSION"
+            exit 1
+          fi
+          echo "version: $VERSION"
+
+          # observe dry-run
+          OUT=$(./emily observe --dry-run "ci-probe" 2>&1)
+          if [[ "$OUT" != *"ci-probe"* ]]; then
+            echo "FAIL: observe --dry-run output unexpected: $OUT"
+            exit 1
+          fi
+          echo "observe --dry-run: OK"
+
+          # apples get bad id (must exit non-zero)
+          if ./emily apples get notanumber 2>/dev/null; then
+            echo "FAIL: apples get <non-numeric> should exit non-zero"
+            exit 1
+          fi
+          echo "apples get bad-id: OK (non-zero exit)"
+
+          # help works
+          OUT=$(./emily help observe 2>&1)
+          if [[ "$OUT" != *"emily observe"* ]]; then
+            echo "FAIL: help observe unexpected"
+            exit 1
+          fi
+          echo "help observe: OK"
+
+      - name: Generate Construct Bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="EMILY_CLI_CONSTRUCT.txt"
+          {
+            echo "EMILY CLI CONSTRUCT ${{ github.run_number }}"
+            echo "commit: $GITHUB_SHA"
+            echo "generated_utc: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            echo
+          } > "$OUT"
+
+          while IFS= read -r relpath; do
+            {
+              echo "--- FILE START: ${relpath} ---"
+              cat "${relpath}"
+              echo
+              echo "--- FILE END: ${relpath} ---"
+              echo
+            } >> "$OUT"
+          done < <(
+            find . \
+              \( \
+                -path './.git' \
+                -o -path './vendor' \
+                -o -path './dist' \
+                -o -path './build' \
+                -o -path './artifacts' \
+                -o -path './tmp' \
+              \) -prune -o \
+              -type f \
+              \( \
+                -name '*.go' -o -name '*.mod' -o -name '*.sum' -o \
+                -name '*.md' -o -name '*.txt' -o -name '*.sh' -o \
+                -name '*.yaml' -o -name '*.yml' -o -name '*.toml' -o \
+                -name 'Makefile' -o -name '.gitignore' \
+              \) \
+              ! -name "$OUT" \
+              -print | sed 's#^./##' | LC_ALL=C sort
+          )
+
+          test -s "$OUT"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: emily-cli-${{ github.run_number }}-${{ github.sha }}
+          path: |
+            emily
+            EMILY_CLI_CONSTRUCT.txt
+          if-no-files-found: error
