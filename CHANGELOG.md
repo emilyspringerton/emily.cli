@@ -1,3 +1,7 @@
+## 2026-06-25
+
+- feat(ci): GitHub Actions CI workflow — test, build, smoke test, construct bundle
+
 ## 2026-06-24
 - feat: S125-08 emily memory consolidate — merge *.json fragments → consolidated.json (Apple #3667)
 
