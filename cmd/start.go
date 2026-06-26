@@ -30,14 +30,15 @@ import (
 
 func RunStart(args []string) int {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
-	startIDUNA := fs.Bool("iduna", false, "also start IDUNA via systemctl --user start iduna.service")
-	startAll := fs.Bool("all", false, "also start newssite and FatBaby pipeline processes")
-	withNewssite  := fs.Bool("newssite", false, "start the newssite on :8082")
-	withSignalapi := fs.Bool("signalapi", false, "start signalapi on :9091 (SEC/PR signal reads)")
-	withShankpit  := fs.Bool("shankpit", false, "start shank_go_server on :6969 + emily-bot fill players")
-	botCount      := fs.Int("bots", 2, "number of emily-bot fill players to launch with --shankpit")
-	dryRun := fs.Bool("dry-run", false, "show what would be started without starting anything")
-	agiLoop := fs.Bool("agi", false, "enable AGI loop mode: obs-watcher passes --continue to claude so RSI cycles build persistent context")
+	startIDUNA      := fs.Bool("iduna", false, "also start IDUNA via systemctl --user start iduna.service")
+	startAll        := fs.Bool("all", false, "also start newssite and FatBaby pipeline processes")
+	withNewssite    := fs.Bool("newssite", false, "start the newssite on :8082")
+	withSignalapi   := fs.Bool("signalapi", false, "start signalapi on :9091 (SEC/PR signal reads)")
+	withShankpit    := fs.Bool("shankpit", false, "start shank_go_server on :6969 + emily-bot fill players")
+	withEarnings    := fs.Bool("earnings-alert", false, "install + enable systemd timer for weekly earnings-alert email (Monday 07:30 UTC)")
+	botCount        := fs.Int("bots", 2, "number of emily-bot fill players to launch with --shankpit")
+	dryRun          := fs.Bool("dry-run", false, "show what would be started without starting anything")
+	agiLoop         := fs.Bool("agi", false, "enable AGI loop mode: obs-watcher passes --continue to claude so RSI cycles build persistent context")
 
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -137,6 +138,14 @@ func RunStart(args []string) int {
 			if !*dryRun && i < *botCount-1 {
 				time.Sleep(500 * time.Millisecond)
 			}
+		}
+	}
+
+	// earnings-alert systemd timer install.
+	if *withEarnings {
+		fmt.Printf("  %-26s ", "earnings-alert.timer")
+		if err := runInstallEarningsAlert(cfg, *dryRun); err != nil {
+			fmt.Printf("ERROR: %v\n", err)
 		}
 	}
 
@@ -392,6 +401,83 @@ func startEmilyBot(cfg *config.Config, logDir string, dryRun bool, idx int) (boo
 	}
 	logFile.Close()
 	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
+}
+
+// runInstallEarningsAlert builds the earnings-alert binary (if absent), writes
+// ~/.config/systemd/user/earnings-alert.{service,timer}, and enables the timer.
+// On dry-run it prints the unit content without writing anything.
+func runInstallEarningsAlert(cfg *config.Config, dryRun bool) error {
+	home := os.Getenv("HOME")
+	fatBabyRoot := cfg.FatBabyRoot
+	binPath := filepath.Join(fatBabyRoot, "bin", "earnings-alert")
+	calDir := filepath.Join(fatBabyRoot, "var", "earnings-calendar")
+	alertTo := os.Getenv("ALERT_TO")
+	if alertTo == "" {
+		alertTo = "emilyspringerton@gmail.com"
+	}
+
+	svcContent := fmt.Sprintf(`[Unit]
+Description=Emily earnings-alert — weekly earnings email
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%s
+ExecStart=%s -cal-dir %s -to %s -days 7
+StandardOutput=journal
+StandardError=journal
+`, fatBabyRoot, binPath, calDir, alertTo)
+
+	timerContent := `[Unit]
+Description=Run Emily earnings-alert every Monday at 07:30 UTC
+
+[Timer]
+OnCalendar=Mon 07:30 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+`
+
+	if dryRun {
+		fmt.Println("[dry-run]")
+		fmt.Printf("  would build: %s\n", binPath)
+		fmt.Printf("  would write: %s/.config/systemd/user/earnings-alert.service\n", home)
+		fmt.Printf("  would write: %s/.config/systemd/user/earnings-alert.timer\n", home)
+		fmt.Println("  would run:  systemctl --user daemon-reload && enable --now earnings-alert.timer")
+		return nil
+	}
+
+	// Build binary if missing.
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		if err2 := os.MkdirAll(filepath.Dir(binPath), 0o755); err2 != nil {
+			return fmt.Errorf("mkdir bin: %w", err2)
+		}
+		build := exec.Command("go", "build", "-o", binPath, "./cmd/earnings-alert")
+		build.Dir = fatBabyRoot
+		if out, err2 := build.CombinedOutput(); err2 != nil {
+			return fmt.Errorf("build earnings-alert: %w\n%s", err2, out)
+		}
+	}
+
+	unitDir := filepath.Join(home, ".config", "systemd", "user")
+	if err := os.MkdirAll(unitDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir systemd/user: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(unitDir, "earnings-alert.service"), []byte(svcContent), 0o644); err != nil {
+		return fmt.Errorf("write service: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(unitDir, "earnings-alert.timer"), []byte(timerContent), 0o644); err != nil {
+		return fmt.Errorf("write timer: %w", err)
+	}
+
+	exec.Command("systemctl", "--user", "daemon-reload").Run()
+	if err := exec.Command("systemctl", "--user", "enable", "--now", "earnings-alert.timer").Run(); err != nil {
+		fmt.Printf("installed (enable failed: %v — run manually: systemctl --user enable --now earnings-alert.timer)\n", err)
+		return nil
+	}
+	fmt.Println("timer installed + enabled — fires Mon 07:30 UTC")
+	return nil
 }
 
 // wireIDUNAEnv returns env with IDUNA_* vars set from cfg, overriding any
