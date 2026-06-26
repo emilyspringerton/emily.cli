@@ -1,3 +1,7 @@
+## 2026-06-26
+
+- add emily start --earnings-alert: installs systemd timer + service firing Mon 07:30 UTC, builds earnings-alert binary from PRRJECT_FATBABY if absent
+
 ## 2026-06-25
 
 - feat(ci): GitHub Actions CI workflow — test, build, smoke test, construct bundle
