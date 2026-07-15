@@ -32,9 +32,12 @@ func RunStart(args []string) int {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	startIDUNA      := fs.Bool("iduna", false, "also start IDUNA via systemctl --user start iduna.service")
 	startAll        := fs.Bool("all", false, "also start newssite and FatBaby pipeline processes")
-	withNewssite    := fs.Bool("newssite", false, "start the newssite on :8082")
-	withSignalapi   := fs.Bool("signalapi", false, "start signalapi on :9091 (SEC/PR signal reads)")
-	withShankpit    := fs.Bool("shankpit", false, "start shank_go_server on :6969 + emily-bot fill players")
+	withNewssite      := fs.Bool("newssite", false, "start the newssite on :8082")
+	withSignalapi     := fs.Bool("signalapi", false, "start signalapi on :9091 (SEC/PR signal reads)")
+	withEntityGraph   := fs.Bool("entity-graph", false, "start entity-graph builder")
+	withEpsReconciler := fs.Bool("eps-reconciler", false, "start EPS reconciler")
+	withEpsProcessor  := fs.Bool("eps-processor", false, "start EPS processor")
+	withShankpit      := fs.Bool("shankpit", false, "start shank_go_server on :6969 + emily-bot fill players (never bundled into --all — starts a live game server)")
 	withEarnings    := fs.Bool("earnings-alert", false, "install + enable systemd timer for weekly earnings-alert email (Monday 07:30 UTC)")
 	botCount        := fs.Int("bots", 2, "number of emily-bot fill players to launch with --shankpit")
 	dryRun          := fs.Bool("dry-run", false, "show what would be started without starting anything")
@@ -60,6 +63,8 @@ func RunStart(args []string) int {
 
 	fmt.Printf("\n◈ EMILY OS — START | %s\n\n", time.Now().Format("2006-01-02 15:04:05"))
 
+	failed := false
+
 	// IDUNA — backbone auth service
 	if *startIDUNA {
 		fmt.Print("  iduna.service            ")
@@ -72,6 +77,7 @@ func RunStart(args []string) int {
 			} else {
 				if err2 := exec.Command("systemctl", "--user", "start", "iduna.service").Run(); err2 != nil {
 					fmt.Printf("WARN: %v\n", err2)
+					failed = true
 				} else {
 					fmt.Println("started via systemctl")
 				}
@@ -81,26 +87,33 @@ func RunStart(args []string) int {
 
 	// Agent layer
 	procs := []struct {
-		name    string
-		pat     string // pgrep -f pattern
-		startFn func(*config.Config, string, bool) (bool, string, error)
-		always  bool
+		name         string
+		pat          string // pgrep -f pattern
+		startFn      func(*config.Config, string, bool) (bool, string, error)
+		always       bool
+		flag         *bool // explicit opt-in flag, if any
+		bundledInAll bool  // also started by --all
 	}{
-		{"observation-watcher", "observation-watcher", func(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
+		{"observation-watcher", "cmd/observation-watcher --root", func(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
 			return startObservationWatcher(cfg, logDir, dryRun, *agiLoop)
-		}, true},
-		{"emily-agent (daemon)", "emily-agent.*--daemon|go run.*emily-agent.*--daemon", startEmilyAgent, true},
-		{"newssite",        "go run.*cmd/newssite",   startNewssite,   false},
-		{"signalapi",       "go run.*cmd/signalapi",  startSignalapi,  false},
-		{"shank_go_server", "shank_go_server",         startShankpit,   false},
+		}, true, nil, false},
+		{"emily-agent (daemon)", "emily-agent.*--daemon|go run.*emily-agent.*--daemon", startEmilyAgent, true, nil, false},
+		{"newssite",       "go run.*cmd/newssite",       startNewssite,      false, withNewssite, true},
+		{"signalapi",      "go run.*cmd/signalapi",      startSignalapi,     false, withSignalapi, true},
+		{"entity-graph",   "go run.*cmd/entity-graph",   startEntityGraph,   false, withEntityGraph, true},
+		{"eps-reconciler", "go run.*cmd/eps-reconciler", startEpsReconciler, false, withEpsReconciler, true},
+		{"eps-processor",  "go run.*cmd/eps-processor",  startEpsProcessor,  false, withEpsProcessor, true},
+		// shank_go_server is deliberately NOT bundledInAll: --all is meant for
+		// the FatBaby pipeline, not for spinning up a live game server + bots.
+		{"shank_go_server", "shank_go_server", startShankpit, false, withShankpit, false},
 	}
 
 	for _, p := range procs {
-		if !p.always && !*startAll &&
-			!(p.name == "newssite" && *withNewssite) &&
-			!(p.name == "signalapi" && *withSignalapi) &&
-			!(p.name == "shank_go_server" && *withShankpit) {
-			continue
+		if !p.always {
+			explicit := p.flag != nil && *p.flag
+			if !explicit && !(*startAll && p.bundledInAll) {
+				continue
+			}
 		}
 		fmt.Printf("  %-26s ", p.name)
 		if !*dryRun {
@@ -112,6 +125,7 @@ func RunStart(args []string) int {
 		started, note, err2 := p.startFn(cfg, logDir, *dryRun)
 		if err2 != nil {
 			fmt.Printf("ERROR: %v\n", err2)
+			failed = true
 		} else if started {
 			fmt.Printf("started — %s\n", note)
 		} else {
@@ -130,6 +144,7 @@ func RunStart(args []string) int {
 			started, note, err2 := startEmilyBot(cfg, logDir, *dryRun, i)
 			if err2 != nil {
 				fmt.Printf("ERROR: %v\n", err2)
+				failed = true
 			} else if started {
 				fmt.Printf("started — %s\n", note)
 			} else {
@@ -146,6 +161,7 @@ func RunStart(args []string) int {
 		fmt.Printf("  %-26s ", "earnings-alert.timer")
 		if err := runInstallEarningsAlert(cfg, *dryRun); err != nil {
 			fmt.Printf("ERROR: %v\n", err)
+			failed = true
 		}
 	}
 
@@ -158,14 +174,26 @@ func RunStart(args []string) int {
 	if !*startAll && !*withSignalapi && !*dryRun {
 		fmt.Printf("  NOTE: use --signalapi or --all to also start signalapi on :9091.\n")
 	}
+	if !*startAll && !*withEntityGraph && !*dryRun {
+		fmt.Printf("  NOTE: use --entity-graph or --all to also start the entity-graph builder.\n")
+	}
+	if !*startAll && !*withEpsReconciler && !*dryRun {
+		fmt.Printf("  NOTE: use --eps-reconciler or --all to also start the EPS reconciler.\n")
+	}
+	if !*startAll && !*withEpsProcessor && !*dryRun {
+		fmt.Printf("  NOTE: use --eps-processor or --all to also start the EPS processor.\n")
+	}
 	if !*withShankpit && !*dryRun {
-		fmt.Printf("  NOTE: use --shankpit to also start SHANKPIT server + %d emily-bot fill players.\n", *botCount)
+		fmt.Printf("  NOTE: use --shankpit to also start SHANKPIT server + %d emily-bot fill players (not included in --all).\n", *botCount)
 	}
 
 	fmt.Println()
 	fmt.Println("  emily status     — check process state")
 	fmt.Println("  emily watch      — tail IDUNA Apples live")
 	fmt.Println()
+	if failed {
+		return 1
+	}
 	return 0
 }
 
@@ -315,6 +343,92 @@ func startSignalapi(cfg *config.Config, logDir string, dryRun bool) (bool, strin
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
 		return false, "", fmt.Errorf("start signalapi: %w", err)
+	}
+	logFile.Close()
+	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
+}
+
+// startEntityGraph launches the entity-graph builder detached from the terminal.
+func startEntityGraph(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
+	goArgs := []string{"run", "./cmd/entity-graph", "-store", "./var/secwatch"}
+
+	if dryRun {
+		return false, fmt.Sprintf("[dry-run] go %s  (dir: %s)", strings.Join(goArgs, " "), cfg.FatBabyRoot), nil
+	}
+
+	logPath := filepath.Join(cfg.FatBabyRoot, "var", "logs", "entity-graph.log")
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return false, "", fmt.Errorf("open log: %w", err)
+	}
+
+	cmd := exec.Command("go", goArgs...)
+	cmd.Dir = cfg.FatBabyRoot
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return false, "", fmt.Errorf("start entity-graph: %w", err)
+	}
+	logFile.Close()
+	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
+}
+
+// startEpsReconciler launches the EPS reconciler detached from the terminal.
+func startEpsReconciler(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
+	goArgs := []string{"run", "./cmd/eps-reconciler", "-store", "./var/secwatch", "-eps-dir", "./var/eps"}
+
+	if dryRun {
+		return false, fmt.Sprintf("[dry-run] go %s  (dir: %s)", strings.Join(goArgs, " "), cfg.FatBabyRoot), nil
+	}
+
+	logPath := filepath.Join(cfg.FatBabyRoot, "var", "logs", "eps-reconciler.log")
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return false, "", fmt.Errorf("open log: %w", err)
+	}
+
+	cmd := exec.Command("go", goArgs...)
+	cmd.Dir = cfg.FatBabyRoot
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return false, "", fmt.Errorf("start eps-reconciler: %w", err)
+	}
+	logFile.Close()
+	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
+}
+
+// startEpsProcessor launches the EPS processor detached from the terminal.
+func startEpsProcessor(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
+	goArgs := []string{
+		"run", "./cmd/eps-processor",
+		"-body-store", "./var/prwatch-body",
+		"-discovery-store", "./var/prwatch",
+		"-eps-dir", "./var/eps",
+	}
+
+	if dryRun {
+		return false, fmt.Sprintf("[dry-run] go %s  (dir: %s)", strings.Join(goArgs, " "), cfg.FatBabyRoot), nil
+	}
+
+	logPath := filepath.Join(cfg.FatBabyRoot, "var", "logs", "eps-processor.log")
+	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return false, "", fmt.Errorf("open log: %w", err)
+	}
+
+	cmd := exec.Command("go", goArgs...)
+	cmd.Dir = cfg.FatBabyRoot
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return false, "", fmt.Errorf("start eps-processor: %w", err)
 	}
 	logFile.Close()
 	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil

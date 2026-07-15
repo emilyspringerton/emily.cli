@@ -1,3 +1,10 @@
+## 2026-07-15
+
+- fix(start): `--all` no longer bundles `shank_go_server` — it silently started SHANKPIT's live game server + fill bots any time someone ran `emily start --iduna --all`. Gated only by the explicit `--shankpit` flag now.
+- fix(start): `RunStart` returns exit 1 if any child process failed to launch; previously always returned 0 regardless, so `emily-system.service` (Type=oneshot) reported "active (exited)" success even on total failure.
+- fix(start): tightened observation-watcher's pgrep idempotency pattern from bare `"observation-watcher"` to `"cmd/observation-watcher --root"` — the old pattern could match an operator's own `tail -f .../observation-watcher.log` and cause `emily start` to skip launching it, believing it already running.
+- feat(start): added `--entity-graph`, `--eps-reconciler`, `--eps-processor` flags (all bundled into `--all`) — these three PRRJECT_FATBABY processes previously had zero `emily start` coverage and were always launched by hand with no idempotency guard, risking two copies double-writing to the same append-only NDJSON event stores.
+
 ## 2026-06-26
 
 - add emily start --earnings-alert: installs systemd timer + service firing Mon 07:30 UTC, builds earnings-alert binary from PRRJECT_FATBABY if absent
