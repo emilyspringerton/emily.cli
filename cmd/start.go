@@ -88,24 +88,29 @@ func RunStart(args []string) int {
 	// Agent layer
 	procs := []struct {
 		name         string
-		pat          string // pgrep -f pattern
+		pat          string // pgrep -f pattern (ignored if pidFile is set)
+		pidFile      string // if non-empty, check liveness via this PID file instead of pgrep
 		startFn      func(*config.Config, string, bool) (bool, string, error)
 		always       bool
 		flag         *bool // explicit opt-in flag, if any
 		bundledInAll bool  // also started by --all
 	}{
-		{"observation-watcher", "cmd/observation-watcher --root", func(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
+		{"observation-watcher", "cmd/observation-watcher --root", "", func(cfg *config.Config, logDir string, dryRun bool) (bool, string, error) {
 			return startObservationWatcher(cfg, logDir, dryRun, *agiLoop)
 		}, true, nil, false},
-		{"emily-agent (daemon)", "emily-agent.*--daemon|go run.*emily-agent.*--daemon", startEmilyAgent, true, nil, false},
-		{"newssite",       "go run.*cmd/newssite",       startNewssite,      false, withNewssite, true},
-		{"signalapi",      "go run.*cmd/signalapi",      startSignalapi,     false, withSignalapi, true},
-		{"entity-graph",   "go run.*cmd/entity-graph",   startEntityGraph,   false, withEntityGraph, true},
-		{"eps-reconciler", "go run.*cmd/eps-reconciler", startEpsReconciler, false, withEpsReconciler, true},
-		{"eps-processor",  "go run.*cmd/eps-processor",  startEpsProcessor,  false, withEpsProcessor, true},
+		// emily-agent runs as `go run . -- --daemon` with cwd=EMILY/emily-agent —
+		// its real /proc/pid/cmdline never contains the literal substring
+		// "emily-agent" (cwd isn't part of argv), so no pgrep -f pattern can ever
+		// match it. Track it via PID file instead (same convention as tuiPIDFile).
+		{"emily-agent (daemon)", "", emilyAgentPIDPath(cfg), startEmilyAgent, true, nil, false},
+		{"newssite",       "go run.*cmd/newssite",       "", startNewssite,      false, withNewssite, true},
+		{"signalapi",      "go run.*cmd/signalapi",      "", startSignalapi,     false, withSignalapi, true},
+		{"entity-graph",   "go run.*cmd/entity-graph",   "", startEntityGraph,   false, withEntityGraph, true},
+		{"eps-reconciler", "go run.*cmd/eps-reconciler", "", startEpsReconciler, false, withEpsReconciler, true},
+		{"eps-processor",  "go run.*cmd/eps-processor",  "", startEpsProcessor,  false, withEpsProcessor, true},
 		// shank_go_server is deliberately NOT bundledInAll: --all is meant for
 		// the FatBaby pipeline, not for spinning up a live game server + bots.
-		{"shank_go_server", "shank_go_server", startShankpit, false, withShankpit, false},
+		{"shank_go_server", "shank_go_server", "", startShankpit, false, withShankpit, false},
 	}
 
 	for _, p := range procs {
@@ -117,7 +122,14 @@ func RunStart(args []string) int {
 		}
 		fmt.Printf("  %-26s ", p.name)
 		if !*dryRun {
-			if pid, alive := pgrepFirst(p.pat); alive {
+			var pid int
+			var alive bool
+			if p.pidFile != "" {
+				pid, alive = pidFileAlive(p.pidFile)
+			} else {
+				pid, alive = pgrepFirst(p.pat)
+			}
+			if alive {
 				fmt.Printf("already running (pid %d)\n", pid)
 				continue
 			}
@@ -207,6 +219,35 @@ func pgrepFirst(pattern string) (int, bool) {
 	return pid, pid > 0
 }
 
+// emilyAgentPIDPath returns the PID file path used to track the emily-agent
+// daemon (see the "emily-agent runs as `go run . -- --daemon`" comment above).
+func emilyAgentPIDPath(cfg *config.Config) string {
+	return filepath.Join(cfg.EmilyRoot, "var", "emily-agent.pid")
+}
+
+// pidFileAlive reads a PID file and verifies the process is actually alive
+// via a kill-0 signal check — same liveness approach as tuiPIDFile uses in
+// collectProcesses (cmd/status.go). A stale file (process gone, or file
+// missing) reports not-alive rather than erroring.
+func pidFileAlive(path string) (int, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return 0, false
+	}
+	if proc.Signal(syscall.Signal(0)) != nil {
+		return 0, false
+	}
+	return pid, true
+}
+
 // startObservationWatcher launches the observation-watcher Go command detached
 // from the terminal, with stdout+stderr routed to a log file.
 // When agiLoop is true, --continue is passed to claude so RSI cycles build
@@ -272,6 +313,9 @@ func startEmilyAgent(cfg *config.Config, logDir string, dryRun bool) (bool, stri
 		return false, "", fmt.Errorf("start emily-agent: %w", err)
 	}
 	logFile.Close()
+	if err := os.WriteFile(emilyAgentPIDPath(cfg), []byte(strconv.Itoa(cmd.Process.Pid)), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "warn: write emily-agent pid file: %v\n", err)
+	}
 	return true, fmt.Sprintf("pid %d → %s", cmd.Process.Pid, logPath), nil
 }
 

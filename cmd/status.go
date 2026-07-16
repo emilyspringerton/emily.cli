@@ -392,8 +392,11 @@ func collectProcesses(cfg *config.Config) []processState {
 	cmdCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	// observation-watcher — look for any process with that name in cmdline
-	out, _ := exec.CommandContext(cmdCtx, "pgrep", "-f", "observation-watcher").Output()
+	// observation-watcher — anchored to its real invocation ("cmd/observation-watcher
+	// --root ..."), not a bare "observation-watcher" substring — a bare pattern
+	// matches any process whose cmdline happens to mention the name (e.g. an
+	// operator's shell command or an interactive session discussing it by name).
+	out, _ := exec.CommandContext(cmdCtx, "pgrep", "-f", "cmd/observation-watcher --root").Output()
 	pids := strings.TrimSpace(string(out))
 	if pids != "" {
 		procs = append(procs, processState{Name: "observation-watcher", Running: true, Note: "pid " + strings.ReplaceAll(pids, "\n", ",")})
@@ -401,11 +404,14 @@ func collectProcesses(cfg *config.Config) []processState {
 		procs = append(procs, processState{Name: "observation-watcher", Running: false})
 	}
 
-	// emily-agent — check if the emily-agent binary is running
-	agentOut, _ := exec.CommandContext(cmdCtx, "pgrep", "-f", "emily-agent").Output()
-	agentPids := strings.TrimSpace(string(agentOut))
-	if agentPids != "" {
-		procs = append(procs, processState{Name: "emily-agent", Running: true, Note: "pid " + strings.ReplaceAll(agentPids, "\n", ",")})
+	// emily-agent daemon runs as `go run . -- --daemon` (cwd=EMILY/emily-agent) —
+	// its cmdline never contains the literal substring "emily-agent", so pgrep -f
+	// can never match it (and a bare "emily-agent" pattern instead matches
+	// anything else mentioning the name). Use the PID file written by
+	// startEmilyAgent (cmd/start.go) instead, same liveness convention as
+	// tuiPIDFile below.
+	if pid, alive := pidFileAlive(emilyAgentPIDPath(cfg)); alive {
+		procs = append(procs, processState{Name: "emily-agent", Running: true, Note: fmt.Sprintf("pid %d", pid)})
 	} else {
 		procs = append(procs, processState{Name: "emily-agent", Running: false})
 	}
@@ -488,7 +494,7 @@ func collectFatBabyProcesses(cfg *config.Config) []processState {
 		{"eps-processor", "eps-processor"},
 		{"eps-reconciler", "eps-reconciler"},
 		{"entity-graph", "entity-graph"},
-		{"observation-watcher", "observation-watcher"},
+		{"observation-watcher", "cmd/observation-watcher --root"},
 		{"secwatch", "cmd/secwatch"},
 	}
 

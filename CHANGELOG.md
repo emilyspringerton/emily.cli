@@ -1,3 +1,8 @@
+## 2026-07-16
+
+- fix(start): `emily-agent (daemon)` idempotency check could never match the real process — it runs as `go run . -- --daemon` (cwd=EMILY/emily-agent), whose `/proc/pid/cmdline` never contains the literal substring "emily-agent" (cwd isn't argv), so the old pgrep pattern `"emily-agent.*--daemon|go run.*emily-agent.*--daemon"` was structurally unmatchable. Every re-run of `emily start` (including `emily-system.service`'s reboot-time oneshot) would have spawned a duplicate daemon. Switched to a PID file (`EMILY/var/emily-agent.pid`, same convention as `tuiPIDFile`) written by `startEmilyAgent` and verified via kill-0 liveness check.
+- fix(status): `collectProcesses`/`collectFatBabyProcesses` used bare `pgrep -f "observation-watcher"` / `"emily-agent"` substring patterns for the PROCESSES health display — broad enough to match *any* process whose cmdline happens to mention the name, including an unrelated interactive session. Tightened observation-watcher to the same anchored `"cmd/observation-watcher --root"` pattern already used in `start.go`, and switched emily-agent to the new PID-file check.
+
 ## 2026-07-15
 
 - fix(start): `--all` no longer bundles `shank_go_server` — it silently started SHANKPIT's live game server + fill bots any time someone ran `emily start --iduna --all`. Gated only by the explicit `--shankpit` flag now.
