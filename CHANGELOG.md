@@ -1,3 +1,7 @@
+## 2026-07-18
+
+- feat(key/S153-05): `emily key` generalized beyond hardcoded `ANTHROPIC_API_KEY` — `emily key set <NAME> <VALUE> [--target emily|iduna] [--file <path>]` writes any named secret to a target env file. `--target iduna` resolves to `~/.config/iduna/env` and writes plain `KEY=VALUE` (no `export ` prefix) since systemd's `EnvironmentFile=` doesn't understand shell export syntax — `--target emily` (default) keeps the existing export-prefixed, shell-sourced format for `EMILY/var/emily-secrets.env`. Legacy one-arg `emily key set sk-ant-...` shorthand still works unchanged. `config.WriteEmilySecret`/`RemoveEmilySecret` refactored onto new generic `WriteEnvFile`/`RemoveEnvFile`/`ReadEnvValue` (exported, reusable). Requested directly to let `MAILCHIMP_API_KEY`/`MAILCHIMP_LIST_ID` (IDUNA's new mailing-list feature, EMILY BACKLOG SECTION 153) be set without hand-editing files. 6 new tests.
+
 ## 2026-07-16
 
 - fix(start): `emily-agent (daemon)` idempotency check could never match the real process — it runs as `go run . -- --daemon` (cwd=EMILY/emily-agent), whose `/proc/pid/cmdline` never contains the literal substring "emily-agent" (cwd isn't argv), so the old pgrep pattern `"emily-agent.*--daemon|go run.*emily-agent.*--daemon"` was structurally unmatchable. Every re-run of `emily start` (including `emily-system.service`'s reboot-time oneshot) would have spawned a duplicate daemon. Switched to a PID file (`EMILY/var/emily-agent.pid`, same convention as `tuiPIDFile`) written by `startEmilyAgent` and verified via kill-0 liveness check.

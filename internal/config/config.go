@@ -66,19 +66,34 @@ func ReadEmilySecretsFile(emilyRoot string) string {
 	return envOr("EMILY_SECRETS", emilyRoot+"/var/emily-secrets.env")
 }
 
-// WriteEmilySecret writes or updates a KEY=VALUE pair in the emily secrets file.
-// Creates the file (and var/ directory) if absent. Existing KEY lines are replaced.
+// WriteEmilySecret writes or updates a KEY=VALUE pair in the emily secrets file,
+// with an "export " prefix — this file is consumed by `source`-ing it in shell
+// scripts, which requires export for child-process visibility.
 func WriteEmilySecret(secretsFile, key, value string) error {
-	dir := secretsFile[:strings.LastIndex(secretsFile, "/")]
+	return WriteEnvFile(secretsFile, key, value, true)
+}
+
+// RemoveEmilySecret removes a KEY line from the emily secrets file.
+func RemoveEmilySecret(secretsFile, key string) error {
+	return RemoveEnvFile(secretsFile, key)
+}
+
+// WriteEnvFile writes or updates a KEY=VALUE pair in an arbitrary env file.
+// exportPrefix controls whether lines are written as "export KEY=VALUE" (for
+// files meant to be shell-sourced) or plain "KEY=VALUE" (for files consumed by
+// systemd's EnvironmentFile=, which does NOT understand an "export " prefix —
+// IDUNA/EMILY's own service units are exactly this case). Creates the file
+// (and parent directory) if absent. Existing KEY lines are replaced.
+func WriteEnvFile(path, key, value string, exportPrefix bool) error {
+	dir := path[:strings.LastIndex(path, "/")]
 	if dir == "" {
 		dir = "."
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	// Read existing lines.
 	var lines []string
-	if data, err := os.ReadFile(secretsFile); err == nil {
+	if data, err := os.ReadFile(path); err == nil {
 		for _, l := range strings.Split(string(data), "\n") {
 			if l == "" {
 				continue
@@ -90,14 +105,19 @@ func WriteEmilySecret(secretsFile, key, value string) error {
 			lines = append(lines, l)
 		}
 	}
-	lines = append(lines, fmt.Sprintf("export %s=%s", key, value))
+	prefix := ""
+	if exportPrefix {
+		prefix = "export "
+	}
+	lines = append(lines, fmt.Sprintf("%s%s=%s", prefix, key, value))
 	content := strings.Join(lines, "\n") + "\n"
-	return os.WriteFile(secretsFile, []byte(content), 0o600)
+	return os.WriteFile(path, []byte(content), 0o600)
 }
 
-// RemoveEmilySecret removes a KEY line from the emily secrets file.
-func RemoveEmilySecret(secretsFile, key string) error {
-	data, err := os.ReadFile(secretsFile)
+// RemoveEnvFile removes a KEY line (with or without an "export " prefix) from
+// an arbitrary env file. No-op if the file doesn't exist.
+func RemoveEnvFile(path, key string) error {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // nothing to remove
@@ -116,7 +136,23 @@ func RemoveEmilySecret(secretsFile, key string) error {
 		lines = append(lines, l)
 	}
 	content := strings.Join(lines, "\n") + "\n"
-	return os.WriteFile(secretsFile, []byte(content), 0o600)
+	return os.WriteFile(path, []byte(content), 0o600)
+}
+
+// ReadEnvValue returns the value of key from an arbitrary env file (with or
+// without an "export " prefix), or "" if not present / file doesn't exist.
+func ReadEnvValue(path, key string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, l := range strings.Split(string(data), "\n") {
+		bare := strings.TrimPrefix(strings.TrimSpace(l), "export ")
+		if v, ok := strings.CutPrefix(bare, key+"="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // readEnvFile reads a single KEY=value from a shell-style env file (export KEY=value).
