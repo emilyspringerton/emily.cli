@@ -1,3 +1,7 @@
+## 2026-07-19
+
+- Fixed emily status --fatbaby: newssite/signalapi/secwatch were incorrectly reported down (stale pgrep patterns from before their systemd migration); also fixed a pid-list collision bug in entity-graph/secwatch matching
+
 ## 2026-07-18
 
 - feat(key/S153-05): `emily key` generalized beyond hardcoded `ANTHROPIC_API_KEY` — `emily key set <NAME> <VALUE> [--target emily|iduna] [--file <path>]` writes any named secret to a target env file. `--target iduna` resolves to `~/.config/iduna/env` and writes plain `KEY=VALUE` (no `export ` prefix) since systemd's `EnvironmentFile=` doesn't understand shell export syntax — `--target emily` (default) keeps the existing export-prefixed, shell-sourced format for `EMILY/var/emily-secrets.env`. Legacy one-arg `emily key set sk-ant-...` shorthand still works unchanged. `config.WriteEmilySecret`/`RemoveEmilySecret` refactored onto new generic `WriteEnvFile`/`RemoveEnvFile`/`ReadEnvValue` (exported, reusable). Requested directly to let `MAILCHIMP_API_KEY`/`MAILCHIMP_LIST_ID` (IDUNA's new mailing-list feature, EMILY BACKLOG SECTION 153) be set without hand-editing files. 6 new tests.
