@@ -488,14 +488,28 @@ func collectFatBabyProcesses(cfg *config.Config) []processState {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
+	// Patterns must match both dev (`go run ./cmd/X`, argv contains "cmd/X")
+	// and prod (compiled `bin/X`, argv is just the binary path) invocations,
+	// while NOT matching X's name showing up as someone else's flag value
+	// (every process in this pipeline takes `-store .../var/secwatch`, and
+	// several take `-graph-dir .../var/entity-graph` — a bare "secwatch" or
+	// "entity-graph" substring pattern matches all of those too). Anchor on
+	// "bin/X" or "cmd/X" specifically, never a bare process name.
+	//
+	// newssite/signalapi/secwatch moved to systemd-supervised compiled
+	// binaries (S152-03) and their old "cmd/X"-only patterns went stale,
+	// silently reporting them down while healthy the whole time -- found
+	// 2026-07-19 when a founder-facing status report claimed they were down
+	// and curl proved otherwise. observation-watcher still runs via `go
+	// run`, so its pattern is unaffected.
 	fatbaby := []struct{ name, pattern string }{
-		{"newssite", "cmd/newssite"},
-		{"signalapi", "cmd/signalapi"},
+		{"newssite", "bin/newssite|cmd/newssite"},
+		{"signalapi", "bin/signalapi|cmd/signalapi"},
 		{"eps-processor", "eps-processor"},
-		{"eps-reconciler", "eps-reconciler"},
-		{"entity-graph", "entity-graph"},
+		{"eps-reconciler", "bin/eps-reconciler|cmd/eps-reconciler"},
+		{"entity-graph", "bin/entity-graph|cmd/entity-graph"},
 		{"observation-watcher", "cmd/observation-watcher --root"},
-		{"secwatch", "cmd/secwatch"},
+		{"secwatch", "bin/secwatch|cmd/secwatch"},
 	}
 
 	var procs []processState
