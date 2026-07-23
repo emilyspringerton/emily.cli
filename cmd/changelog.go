@@ -70,7 +70,16 @@ func runChangelogAdd(args []string) int {
 	changelogPath := filepath.Join(root, "CHANGELOG.md")
 	today := time.Now().UTC().Format("2006-01-02")
 
-	if err := appendChangelog(changelogPath, today, message); err != nil {
+	// Auto-tag with the active session fingerprint (EMILY/BACKLOG.md
+	// S170-11) so changelog entries are traceable to the Claude Code
+	// session that produced them, same convention as `emily apples post`.
+	sessionTag := currentSessionTag(cfg.EmilyRoot)
+	loggedMessage := message
+	if sessionTag != "" {
+		loggedMessage = message + " (" + sessionTag + ")"
+	}
+
+	if err := appendChangelog(changelogPath, today, loggedMessage); err != nil {
 		fmt.Fprintf(os.Stderr, "changelog: %v\n", err)
 		return 1
 	}
@@ -99,7 +108,7 @@ func runChangelogAdd(args []string) int {
 
 	if !*noApple && cfg.IDUNAAgentSecret != "" {
 		// Soft-fail: Apple posting is best-effort for changelog entries.
-		_ = postChangelogApple(cfg, repoName, message)
+		_ = postChangelogApple(cfg, repoName, loggedMessage, sessionTag)
 	}
 
 	return 0
@@ -157,11 +166,15 @@ func appendChangelog(path, today, message string) error {
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
-func postChangelogApple(cfg *config.Config, repoName, message string) error {
+func postChangelogApple(cfg *config.Config, repoName, message, sessionTag string) error {
+	runID := sessionTag
+	if runID == "" {
+		runID = fmt.Sprintf("changelog-%d", time.Now().Unix())
+	}
 	client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
 	_, err := client.PostApple(iduna.ApplePayload{
 		SourceRepo: repoName,
-		RunID:      fmt.Sprintf("changelog-%d", time.Now().Unix()),
+		RunID:      runID,
 		AppleType:  "completion",
 		Title:      fmt.Sprintf("changelog(%s): %s", repoName, truncate(message, 60)),
 		Body:       fmt.Sprintf("CHANGELOG updated in %s: %s", repoName, message),

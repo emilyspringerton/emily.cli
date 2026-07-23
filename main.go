@@ -96,6 +96,8 @@ func main() {
 		code = cmd.RunMemory(rest)
 	case "emilyos":
 		code = cmd.RunEmilyOS(rest)
+	case "session":
+		code = cmd.RunSession(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
@@ -508,6 +510,13 @@ Usage:
         Start the FatBaby broker proxy on :8679 (bearer: emily-gpt2-local).
   emily gpt2 status
         Check whether inference server and proxy are running.
+
+  emily session new
+        Generate a session fingerprint (Emiree Mandelbrot fractal + squish/tower/gematria +
+        Dallas moon phase, hashed to a short legible tag). Auto-used by apples post/changelog
+        add to tag their output. Logs to EMILY/var/sessions.ndjson.
+  emily session current
+        Print the active session's tag.
 
   emily gsync REPO [REPO ...]
         Clone (if needed) + git archive → upload to Google Drive via IDUNA.

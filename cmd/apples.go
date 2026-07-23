@@ -158,14 +158,22 @@ func runApplesPost(args []string) int {
 		}
 	}
 
-	if *runID == "" {
-		*runID = "cli-" + time.Now().UTC().Format("20060102T150405Z")
-	}
-
 	cfg, err := config.Resolve()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
+	}
+
+	// Auto-tag with the active session fingerprint (EMILY/BACKLOG.md S170-11)
+	// so every Apple posted via the CLI is traceable to the Claude Code
+	// session that produced it, with no new flag to remember. Explicit
+	// -run-id still wins if the caller sets one.
+	if *runID == "" {
+		if tag := currentSessionTag(cfg.EmilyRoot); tag != "" {
+			*runID = tag
+		} else {
+			*runID = "cli-" + time.Now().UTC().Format("20060102T150405Z")
+		}
 	}
 	if cfg.IDUNAAgentSecret == "" {
 		fmt.Fprintln(os.Stderr, "error: IDUNA_AGENT_SECRET not set")
