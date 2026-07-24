@@ -59,14 +59,16 @@ type SagaDoc struct {
 // RunSaga dispatches emily saga subcommands.
 func RunSaga(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: emily saga lint")
+		fmt.Fprintln(os.Stderr, "usage: emily saga <lint|gaps>")
 		return 1
 	}
 	switch args[0] {
 	case "lint":
 		return runSagaLint(args[1:])
+	case "gaps":
+		return runSagaGaps(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "emily saga: unknown subcommand %q — try: lint\n", args[0])
+	fmt.Fprintf(os.Stderr, "emily saga: unknown subcommand %q — try: lint, gaps\n", args[0])
 	return 1
 }
 
