@@ -1,3 +1,7 @@
+## 2026-07-24
+
+- feat(saga): `emily saga lint` (HQ-SPEC-DOC-102 build-sequence step 1) — parses the restricted-YAML frontmatter (`doc_id`, `authority`, `supersedes`, `amends`, `claims`) every `EMILY/docs/hq-specs/*.md` now carries, hand-rolled parser, no new YAML dependency (stdlib-first, matching this codebase's convention elsewhere). Checks: enum validity on `authority`/claim `type`/`reality_binding`, claim-ID format + doc-of-origin ownership, ID collisions across the corpus, dangling `supersedes`/`amends` references, unenumerated inheritance (an `amends` entry naming no claims), and orphan goldens (a fully-superseded doc still marked golden). See `EMILY/docs/hq-specs/SAGA_SCHEMA.md` for the schema itself. 13 new tests (parser + all 7 lint rules + a real-corpus integration check against the actual retrofitted HQ-SPEC docs). Also fixed an unrelated pre-existing `go vet` warning surfaced while building this (`append(os.Environ())` with no values in `cmd/emilyos.go` — harmless no-op, simplified to a bare assignment).
+
 ## 2026-07-19
 
 - Fixed emily status --fatbaby: newssite/signalapi/secwatch were incorrectly reported down (stale pgrep patterns from before their systemd migration); also fixed a pid-list collision bug in entity-graph/secwatch matching

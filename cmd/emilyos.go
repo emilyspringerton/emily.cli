@@ -47,7 +47,7 @@ Exit codes:
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	// Forward EmilyOS env vars.
-	cmd.Env = append(os.Environ())
+	cmd.Env = os.Environ()
 	if err := cmd.Run(); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
 			return exit.ExitCode()

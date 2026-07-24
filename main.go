@@ -98,6 +98,8 @@ func main() {
 		code = cmd.RunEmilyOS(rest)
 	case "session":
 		code = cmd.RunSession(rest)
+	case "saga":
+		code = cmd.RunSaga(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
