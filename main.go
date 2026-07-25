@@ -100,6 +100,8 @@ func main() {
 		code = cmd.RunSession(rest)
 	case "saga":
 		code = cmd.RunSaga(rest)
+	case "vault":
+		code = cmd.RunVault(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
@@ -549,6 +551,24 @@ Usage:
   emily emilyos verb <verb> <object>
         EmilyOS policy kernel interface (wraps emilyos binary).
         'emily help emilyos' for full reference.
+
+  emily vault init
+        One-time IDUNA Vault setup — prompts for a new master passphrase.
+  emily vault unlock
+        Unlock the vault after an IDUNA restart — prompts for the passphrase.
+  emily vault lock
+        Discard the in-memory vault key immediately.
+  emily vault status
+        Show initialized/locked state.
+  emily vault add -type <login|note|api_key|totp|document> -name <name> [-field k=v ...]
+        Add an item. e.g. -type login -name "AWS Root" -field username=root -field password=hunter2
+  emily vault list
+        List items (id, type, name — not secrets).
+  emily vault get <id>
+        Show one item fully decrypted.
+  emily vault delete <id>
+        Delete an item.
+        IDUNA Vault runs loopback-only — this command must run on the IDUNA host.
 
 Environment:
   IDUNA_BASE_URL      IDUNA server (default: http://localhost:8080)

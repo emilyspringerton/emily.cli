@@ -1,3 +1,14 @@
+## 2026-07-25
+
+- feat(vault): `emily vault init|unlock|lock|status|add|get|list|delete` — CLI for IDUNA Vault
+  VS0 (S170-03b). Talks to IDUNA's new loopback-only `/api/v1/vault/*` endpoints; passphrases
+  always read interactively with echo disabled (`golang.org/x/term`, first external dependency
+  this module has needed — was pure stdlib before), never as a flag/arg, same rationale as the
+  existing `cmd/mailing-list-unlock` precedent in IDUNA. `emily vault add -type <type> -name
+  <name> -field k=v ...` for flexible per-item fields across the five VS0 item types (login,
+  note, api_key, totp, document). Verified end-to-end against a real running IDUNA instance
+  before deploying (init, unlock, add, list, get, delete, lock, re-unlock).
+
 ## 2026-07-24
 
 - feat(saga): `emily saga lint` (HQ-SPEC-DOC-102 build-sequence step 1) — parses the restricted-YAML frontmatter (`doc_id`, `authority`, `supersedes`, `amends`, `claims`) every `EMILY/docs/hq-specs/*.md` now carries, hand-rolled parser, no new YAML dependency (stdlib-first, matching this codebase's convention elsewhere). Checks: enum validity on `authority`/claim `type`/`reality_binding`, claim-ID format + doc-of-origin ownership, ID collisions across the corpus, dangling `supersedes`/`amends` references, unenumerated inheritance (an `amends` entry naming no claims), and orphan goldens (a fully-superseded doc still marked golden). See `EMILY/docs/hq-specs/SAGA_SCHEMA.md` for the schema itself. 13 new tests (parser + all 7 lint rules + a real-corpus integration check against the actual retrofitted HQ-SPEC docs). Also fixed an unrelated pre-existing `go vet` warning surfaced while building this (`append(os.Environ())` with no values in `cmd/emilyos.go` — harmless no-op, simplified to a bare assignment).
