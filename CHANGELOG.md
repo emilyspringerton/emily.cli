@@ -1,3 +1,20 @@
+## 2026-07-31 (2)
+
+- fix(redgarden): `emily redgarden` failed with "Permission denied" for the founder — root
+  cause: this shell's `XDG_RUNTIME_DIR` was inherited as `/run/user/0` (root's runtime dir) even
+  though the process runs as uid 1000, so `systemctl --user` tried to reach root's session bus
+  instead of the founder's own. `redgardenSystemctlEnv()` previously only filled in
+  `XDG_RUNTIME_DIR` when it was *unset*; a wrong-but-present value passed straight through. Now
+  it always strips any inherited value and sets `/run/user/<actual-uid>`. Also found and fixed a
+  related correctness bug this surfaced: `bots [N]` wrote the new count to the live unit file
+  *before* running `daemon-reload`/`restart`, so a failure at either of those steps (as the
+  permission bug caused) left the on-disk unit pointing at a count the live pool was never
+  actually restarted to match. Both steps now roll the file back to its prior content on
+  failure, so a failed `bots` call can't leave the config and the running pool silently
+  disagreeing. Verified against the founder's exact broken environment (reproduced
+  `XDG_RUNTIME_DIR=/run/user/0`): `bots 19` now correctly writes, reloads, restarts, and lands
+  the live pool at 19 (confirmed via live process count).
+
 ## 2026-07-31
 
 - feat(redgarden): `emily redgarden bots [N]` / `emily redgarden status` — self-service control

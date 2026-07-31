@@ -120,6 +120,17 @@ func runRedgardenSetBots(n int) int {
 		return 1
 	}
 
+	// If daemon-reload or restart fails below, put the original file back rather
+	// than leaving the unit on disk pointing at a count the live process was
+	// never actually restarted to match.
+	rollback := func() {
+		if werr := os.WriteFile(unitPath, data, 0644); werr != nil {
+			fmt.Fprintf(os.Stderr, "emily redgarden bots: rollback write failed: %v (unit file may now be out of sync with the live pool)\n", werr)
+			return
+		}
+		fmt.Fprintln(os.Stderr, "emily redgarden bots: reverted unit file so it stays in sync with the still-running pool.")
+	}
+
 	env := redgardenSystemctlEnv()
 
 	reload := exec.Command("systemctl", "--user", "daemon-reload")
@@ -127,6 +138,7 @@ func runRedgardenSetBots(n int) int {
 	reload.Stdout, reload.Stderr = os.Stdout, os.Stderr
 	if err := reload.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "emily redgarden bots: daemon-reload: %v\n", err)
+		rollback()
 		return 1
 	}
 
@@ -135,6 +147,7 @@ func runRedgardenSetBots(n int) int {
 	restart.Stdout, restart.Stderr = os.Stdout, os.Stderr
 	if err := restart.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "emily redgarden bots: restart: %v\n", err)
+		rollback()
 		return 1
 	}
 
@@ -177,15 +190,19 @@ func runRedgardenStatus() int {
 	return 0
 }
 
-// redgardenSystemctlEnv ensures XDG_RUNTIME_DIR is set for `systemctl --user`
-// to find the caller's user session bus, even if the parent process's env is bare.
+// redgardenSystemctlEnv forces XDG_RUNTIME_DIR to the actual current user's
+// runtime dir for `systemctl --user`. An inherited value pointing at a
+// different user's runtime dir (e.g. a leftover /run/user/0 from a sudo/root
+// shell) is worse than none: it makes systemctl try to reach that user's
+// session bus and fail with a real, misleading "Permission denied" rather
+// than falling back cleanly, so a stale/wrong value is stripped, not kept.
 func redgardenSystemctlEnv() []string {
-	env := os.Environ()
-	if os.Getenv("XDG_RUNTIME_DIR") != "" {
-		return env
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "XDG_RUNTIME_DIR=") {
+			env = append(env, kv)
+		}
 	}
-	if u, err := user.Current(); err == nil {
-		return append(env, fmt.Sprintf("XDG_RUNTIME_DIR=/run/user/%s", u.Uid))
-	}
-	return env
+	uid := os.Getuid()
+	return append(env, fmt.Sprintf("XDG_RUNTIME_DIR=/run/user/%d", uid))
 }
