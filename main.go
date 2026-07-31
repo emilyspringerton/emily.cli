@@ -90,6 +90,8 @@ func main() {
 		code = cmd.RunChat(rest)
 	case "shankpit":
 		code = cmd.RunShankpit(rest)
+	case "redgarden":
+		code = cmd.RunRedgarden(rest)
 	case "gsync":
 		code = cmd.RunGSync(rest)
 	case "memory":
@@ -425,6 +427,19 @@ Flags:
 The admin server runs on :6970 alongside the UDP game server on :6969.
 Start server: ./server-go --admin-port 6970 [--admin-token mytoken]
 `)
+	case "redgarden":
+		fmt.Print(`emily redgarden — REDGARDEN persistent bot-pool control
+
+Subcommands:
+  bots [N]   set the live bot-pool size to N (default 20 when omitted) and
+             restart redgarden-bot-pool.service to apply it
+  status     show the current live bot count + service state
+
+N==20 is fully self-sustaining (matches start immediately, continuous data)
+but leaves no human slot open at the bot-pool matchmaker (:7778). N<20 opens
+(20-N) human slots at :7778, but no match starts there until they fill. The
+player-only pool at :7779 always stays open for humans either way.
+`)
 	case "emilyos":
 		fmt.Print(`emily emilyos — EmilyOS policy kernel interface
 
@@ -539,6 +554,12 @@ Usage:
         File an Emily observation from current server state.
   emily shankpit restart
         SIGTERM + relaunch SHANKPIT server via emily start --shankpit.
+
+  emily redgarden bots [N]
+        Set the live REDGARDEN persistent bot-pool size (default 20) and restart it.
+        N==20 is self-sustaining but leaves no human slot at :7778; N<20 opens (20-N) slots.
+  emily redgarden status
+        Show the current live bot count and bot-pool/matchmaker service state.
 
   emily key set <api-key>
   emily key show

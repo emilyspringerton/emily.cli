@@ -20,6 +20,7 @@ type Config struct {
 	FatBabyRoot      string
 	EmilyRoot        string
 	ShankpitRoot     string
+	RedgardenRoot    string
 	SecretsFile      string
 	EmilySecretsFile string
 }
@@ -36,6 +37,7 @@ func Resolve() (*Config, error) {
 		FatBabyRoot:      envOr("FATBABY_ROOT", "/home/fatbaby/PRRJECT_FATBABY"),
 		EmilyRoot:        emilyRoot,
 		ShankpitRoot:     envOr("SHANKPIT_ROOT", "/home/fatbaby/SHANKPIT"),
+		RedgardenRoot:    envOr("REDGARDEN_ROOT", "/home/fatbaby/REDGARDEN"),
 		SecretsFile:      envOr("IDUNA_SECRETS", "/home/fatbaby/IDUNA/var/agent-secrets.env"),
 		EmilySecretsFile: envOr("EMILY_SECRETS", emilyRoot+"/var/emily-secrets.env"),
 	}

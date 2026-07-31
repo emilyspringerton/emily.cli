@@ -1,3 +1,17 @@
+## 2026-07-31
+
+- feat(redgarden): `emily redgarden bots [N]` / `emily redgarden status` — self-service control
+  over the live REDGARDEN persistent bot-pool size, so the founder can scale it down to open a
+  human slot at the bot-pool matchmaker (:7778) without asking Claude Code to do it each time.
+  Defaults to 20 (fully self-sustaining, no open human slot) when N is omitted, matching the
+  founder's explicit spec. Edits the live systemd user unit
+  (`~/.config/systemd/user/redgarden-bot-pool.service`)'s `ExecStart=` line and `Description=`
+  bot-count text in place, then `systemctl --user daemon-reload` + `restart
+  redgarden-bot-pool.service`. Rejects out-of-range counts (0-20, since `lobby_size` is fixed at
+  20). `status` reports the configured count plus live state of the bot-pool and both
+  matchmaker services. Verified end-to-end against the real running pool (20 -> 19 -> 20,
+  confirmed via live process count each time).
+
 ## 2026-07-25
 
 - feat(vault): `emily vault init|unlock|lock|status|add|get|list|delete` — CLI for IDUNA Vault
