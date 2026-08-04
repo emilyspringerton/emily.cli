@@ -1,3 +1,7 @@
+## 2026-08-04
+
+- emily iduna create-account — mint real DragonsNShit test accounts from the CLI (wraps email/register's character_name variant) (sess-20260723-2347-df115bd5)
+
 ## 2026-07-31 (2)
 
 - fix(redgarden): `emily redgarden` failed with "Permission denied" for the founder — root
