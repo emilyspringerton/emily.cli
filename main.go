@@ -90,6 +90,8 @@ func main() {
 		code = cmd.RunChat(rest)
 	case "shankpit":
 		code = cmd.RunShankpit(rest)
+	case "iduna":
+		code = cmd.RunIduna(rest)
 	case "redgarden":
 		code = cmd.RunRedgarden(rest)
 	case "gsync":
@@ -554,6 +556,10 @@ Usage:
         File an Emily observation from current server state.
   emily shankpit restart
         SIGTERM + relaunch SHANKPIT server via emily start --shankpit.
+
+  emily iduna create-account <character-name> [--job WAR] [--email E] [--password P]
+        Mint a real DragonsNShit test account (player + credential + character, atomic).
+        Prints email/password to log in with at battlegrounds_gui or apps2/mud's login screen.
 
   emily redgarden bots [N]
         Set the live REDGARDEN persistent bot-pool size (default 20) and restart it.
