@@ -1,3 +1,7 @@
+## 2026-08-05
+
+- emily saga gaps --repo <path> -- saga.manifest.yaml format + CI gaps report (S143-02): claim-without-code (vaporware debt) + code-without-claim (dark matter) detection (sess-20260723-2347-df115bd5)
+
 ## 2026-08-04
 
 - emily iduna create-account — mint real DragonsNShit test accounts from the CLI (wraps email/register's character_name variant) (sess-20260723-2347-df115bd5)
