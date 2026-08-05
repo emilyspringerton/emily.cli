@@ -94,6 +94,8 @@ func main() {
 		code = cmd.RunIduna(rest)
 	case "redgarden":
 		code = cmd.RunRedgarden(rest)
+	case "survival":
+		code = cmd.RunSurvival(rest)
 	case "gsync":
 		code = cmd.RunGSync(rest)
 	case "memory":
@@ -442,6 +444,24 @@ but leaves no human slot open at the bot-pool matchmaker (:7778). N<20 opens
 (20-N) human slots at :7778, but no match starts there until they fill. The
 player-only pool at :7779 always stays open for humans either way.
 `)
+	case "survival":
+		fmt.Print(`emily survival — EINHORN_SURVIVAL (Paper Minecraft) server ops
+
+Subcommands:
+  logs [-n N] [-f=false]   tail server.log (default: last 40 lines, follow)
+  status                   systemd --user unit state for einhorn-survival.service
+  restart                  systemctl --user restart einhorn-survival.service
+
+Env:
+  SURVIVAL_ROOT   repo root (default /home/fatbaby/EINHORN_SURVIVAL)
+
+Examples:
+  emily survival logs             # tail -f server.log
+  emily survival logs -f=false    # print last 40 lines and exit
+  emily survival logs -n 200      # follow, starting 200 lines back
+  emily survival status
+  emily survival restart
+`)
 	case "emilyos":
 		fmt.Print(`emily emilyos — EmilyOS policy kernel interface
 
@@ -566,6 +586,13 @@ Usage:
         N==20 is self-sustaining but leaves no human slot at :7778; N<20 opens (20-N) slots.
   emily redgarden status
         Show the current live bot count and bot-pool/matchmaker service state.
+
+  emily survival logs [-n N] [-f=false]
+        Tail EINHORN_SURVIVAL's server.log (default: last 40 lines, follow).
+  emily survival status
+        systemd --user unit state for einhorn-survival.service.
+  emily survival restart
+        Restart the live Paper server via systemctl --user.
 
   emily key set <api-key>
   emily key show
