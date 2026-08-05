@@ -1,4 +1,5 @@
 ## 2026-08-05
+- emily saga gaps --json -- machine-readable output for IDUNA's new Back Office divergence-queue page (sess-20260723-2347-df115bd5)
 
 - emily saga gaps --repo <path> -- saga.manifest.yaml format + CI gaps report (S143-02): claim-without-code (vaporware debt) + code-without-claim (dark matter) detection (sess-20260723-2347-df115bd5)
 
