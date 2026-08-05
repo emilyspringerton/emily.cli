@@ -23,6 +23,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -49,10 +50,26 @@ type ManifestEntry struct {
 }
 
 // RunSagaGaps implements `emily saga gaps --repo <path> [--manifest <path>]`.
+// SagaGapsReport is the machine-readable shape of `emily saga gaps --json` --
+// used by IDUNA's Back Office divergence-queue page (S143-03) so it parses
+// structured output instead of scraping the human-readable report below.
+type SagaGapsReport struct {
+	Repo            string   `json:"repo"`
+	ManifestPath    string   `json:"manifest_path"`
+	ManifestEntries int      `json:"manifest_entries"`
+	Vaporware       []string `json:"vaporware"`
+	BrokenRefs      []string `json:"broken_refs"`
+	UnknownClaims   []string `json:"unknown_claims"`
+	DarkMatter      []string `json:"dark_matter"`
+	SurfaceScanErr  string   `json:"surface_scan_error,omitempty"`
+	TotalGaps       int      `json:"total_gaps"`
+}
+
 func runSagaGaps(args []string) int {
 	fs := flag.NewFlagSet("saga gaps", flag.ContinueOnError)
 	repoPath := fs.String("repo", "", "repo root to check (required)")
 	manifestPath := fs.String("manifest", "", "manifest path (default: <repo>/saga.manifest.yaml)")
+	jsonOut := fs.Bool("json", false, "emit a SagaGapsReport as JSON instead of the human-readable report")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -88,8 +105,10 @@ func runSagaGaps(args []string) int {
 		}
 	}
 
-	fmt.Printf("\n◈ SAGA GAPS | %s\n", repo)
-	fmt.Printf("  manifest: %s (%d entries)\n\n", mPath, len(entries))
+	if !*jsonOut {
+		fmt.Printf("\n◈ SAGA GAPS | %s\n", repo)
+		fmt.Printf("  manifest: %s (%d entries)\n\n", mPath, len(entries))
+	}
 
 	var unknownClaims, vaporware, brokenRefs []string
 	boundText := manifestSearchText(entries)
@@ -124,6 +143,29 @@ func runSagaGaps(args []string) int {
 	sort.Strings(brokenRefs)
 	sort.Strings(darkMatter)
 
+	total := len(vaporware) + len(brokenRefs) + len(unknownClaims) + len(darkMatter)
+
+	if *jsonOut {
+		report := SagaGapsReport{
+			Repo: repo, ManifestPath: mPath, ManifestEntries: len(entries),
+			Vaporware: vaporware, BrokenRefs: brokenRefs, UnknownClaims: unknownClaims,
+			DarkMatter: darkMatter, TotalGaps: total,
+		}
+		if surfaceErr != nil {
+			report.SurfaceScanErr = surfaceErr.Error()
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(report); err != nil {
+			fmt.Fprintf(os.Stderr, "encode json: %v\n", err)
+			return 1
+		}
+		if total == 0 {
+			return 0
+		}
+		return 1
+	}
+
 	printGapsList("claim-without-code (vaporware debt) — bound to nothing", vaporware)
 	printGapsList("broken verification anchors — test ref doesn't exist", brokenRefs)
 	printGapsList("claim IDs not found in the doc corpus (typo?)", unknownClaims)
@@ -133,7 +175,6 @@ func runSagaGaps(args []string) int {
 		printGapsList("code-without-claim (dark matter) — real surface, no manifest entry", darkMatter)
 	}
 
-	total := len(vaporware) + len(brokenRefs) + len(unknownClaims) + len(darkMatter)
 	if total == 0 {
 		fmt.Println("  ALL CLEAN — every manifest entry is bound, every surface item is claimed.")
 		return 0
