@@ -1,3 +1,6 @@
+## 2026-08-06
+- S143-04 (SAGA agent v0, deterministic parts): `emily saga which-doc-governs <claim-id>`, `emily saga status [doc-id]`, `emily saga conflicts` -- query tools atop the existing claim ledger parser. Governance resolution walks the amends/supersedes graph (partial amendment takes priority over full supersession) to find which doc currently backs a given claim. `conflicts` adds two structural checks lint doesn't already catch as hard errors: amends referencing a claim ID that doesn't exist anywhere, and a claim whose governance has moved to a doc with lower authority than its original owner (e.g. a verified claim now backed only by a draft). Semantic conflict detection stays out of scope (S143-05, NORN-gated). 8 new tests, `go test ./...` clean, live-verified against the real `EMILY/docs/hq-specs` corpus (0 structural conflicts found).
+
 ## 2026-08-05
 - emily survival logs/status/restart -- first-class CLI support for EINHORN_SURVIVAL (Paper Minecraft server), same systemd --user pattern as shankpit/redgarden
 
