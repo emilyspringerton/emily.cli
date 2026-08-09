@@ -84,6 +84,12 @@ func RunObserve(args []string) int {
 		return 1
 	}
 
+	// Auto-tag with the active session fingerprint (EMILY/BACKLOG.md S170-11),
+	// same convention as `emily apples post` / `emily changelog add`, so an
+	// observation is traceable to the session that raised it.
+	sessionTag := currentSessionTag(cfg.EmilyRoot)
+	payload.SessionTag = sessionTag
+
 	path, err := obs.Write(cfg.FatBabyRoot, payload)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -100,7 +106,10 @@ func RunObserve(args []string) int {
 			title = title[:99] + "…"
 		}
 		body := buildObsBody(payload)
-		runID := "cli-obs-" + time.Now().UTC().Format("20060102T150405Z")
+		runID := sessionTag
+		if runID == "" {
+			runID = "cli-obs-" + time.Now().UTC().Format("20060102T150405Z")
+		}
 		id, appleErr := client.PostApple(iduna.ApplePayload{
 			AppleType:  "signal_observation",
 			Title:      title,
@@ -123,6 +132,9 @@ func RunObserve(args []string) int {
 		if appleID > 0 {
 			out["apple_id"] = appleID
 		}
+		if sessionTag != "" {
+			out["session_tag"] = sessionTag
+		}
 		enc := json.NewEncoder(os.Stdout)
 		_ = enc.Encode(out)
 	} else {
@@ -131,6 +143,9 @@ func RunObserve(args []string) int {
 		fmt.Printf("  path:     %s\n", path)
 		fmt.Printf("  severity: %s\n", color.Severity(payload.Severity, payload.Severity))
 		fmt.Printf("  summary:  %s\n", payload.Summary)
+		if sessionTag != "" {
+			fmt.Printf("  session:  %s\n", sessionTag)
+		}
 		if appleID > 0 {
 			fmt.Printf("  apple:    #%d filed to IDUNA\n", appleID)
 		}

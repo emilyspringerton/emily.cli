@@ -13,7 +13,7 @@ CLI binary, no server port. Reads `IDUNA_BASE_URL` + `IDUNA_AGENT_SECRET` from e
 
 | Command | Description |
 |---|---|
-| `emily observe <msg>` | Post observation to FatBaby pipeline (IDUNA + signal file) |
+| `emily observe <msg>` | Post observation to FatBaby pipeline (IDUNA + signal file). Auto-tags with the active `emily session`; general-purpose founder-input intake, not FatBaby-only despite the name |
 | `emily obs amend <key> <correction>` | Append correction to an existing observation |
 | `emily apples list [filter]` | Query IDUNA Apples log |
 | `emily apples post -t <type> <title>` | File an Apple to IDUNA |
@@ -25,6 +25,7 @@ CLI binary, no server port. Reads `IDUNA_BASE_URL` + `IDUNA_AGENT_SECRET` from e
 | `emily backlog [promote]` | Curate/promote INTAKE QUEUE items via haiku |
 | `emily agents list` | List registered IDUNA agents |
 | `emily primetask [create|list]` | Interact with Emily Prime RSI task queue |
+| `emily session new` / `emily session current` | Generate/retrieve the session fingerprint (`sess-YYYYMMDD-HHMM-<8hex>`) auto-stamped onto Apples, CHANGELOG entries, and observations |
 
 ## Directory Layout
 

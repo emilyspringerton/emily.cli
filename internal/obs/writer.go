@@ -21,8 +21,9 @@ type Payload struct {
 	Severity     string `json:"severity"`
 	Findings     string `json:"findings,omitempty"`
 	SuggestedFix string `json:"suggested_fix,omitempty"`
-	Amendment    string `json:"amendment,omitempty"`  // human correction note; original summary preserved
-	AmendedAt    string `json:"amended_at,omitempty"` // RFC3339 timestamp of amendment
+	Amendment    string `json:"amendment,omitempty"`   // human correction note; original summary preserved
+	AmendedAt    string `json:"amended_at,omitempty"`  // RFC3339 timestamp of amendment
+	SessionTag   string `json:"session_tag,omitempty"` // active `emily session` fingerprint, if any
 }
 
 // Write atomically writes an observation to root/var/emily-observations/.
@@ -40,9 +41,22 @@ func Write(fatBabyRoot string, p Payload) (string, error) {
 		p.Severity = "info"
 	}
 
-	// Filename: RFC3339 with colons replaced by dashes (filesystem-safe)
-	fname := strings.ReplaceAll(p.Timestamp, ":", "-") + ".json"
+	// Filename: RFC3339 with colons replaced by dashes (filesystem-safe).
+	// Timestamp is only second-precision, so two observations posted within
+	// the same second collide on this base name — never silently clobber an
+	// existing observation (found live 2026-08-09: 6 rapid `emily observe`
+	// calls collapsed into 1 surviving file). Fall back to a numeric suffix
+	// until a free filename is found.
+	base := strings.ReplaceAll(p.Timestamp, ":", "-")
+	fname := base + ".json"
 	fpath := filepath.Join(dir, fname)
+	for i := 2; ; i++ {
+		if _, err := os.Stat(fpath); os.IsNotExist(err) {
+			break
+		}
+		fname = fmt.Sprintf("%s-%d.json", base, i)
+		fpath = filepath.Join(dir, fname)
+	}
 
 	data, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
