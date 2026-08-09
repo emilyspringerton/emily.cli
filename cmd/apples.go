@@ -317,9 +317,17 @@ func printApplesJSON(apples []iduna.Apple) {
 	_ = enc.Encode(rows)
 }
 
+// truncate cuts s to at most n runes, not bytes — byte-slicing (the
+// original implementation) can land mid-multibyte-UTF-8-character on any
+// non-ASCII summary (Traditional Chinese commit bodies are the house
+// convention, see feedback-commits-traditional-chinese), producing an
+// invalid UTF-8 replacement-char sequence in BACKLOG.md that made grep
+// silently treat the whole file as binary on some invocations (found live,
+// 2026-08-09, while curating SKULDMARK-related observations).
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	return string(r[:n-1]) + "…"
 }
