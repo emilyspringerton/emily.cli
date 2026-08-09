@@ -1,3 +1,7 @@
+## 2026-08-09
+
+- fix(observe): 修復 emily observe 檔案名稱碰撞導致觀察紀錄靜默遺失的問題（同一秒內多次呼叫會覆寫前一筆），並為 observe/apples/changelog 補上一致的 session 標籤機制 (sess-20260809-1420-e9d3d7f8)
+
 ## 2026-08-06
 - S143-04 (SAGA agent v0, deterministic parts): `emily saga which-doc-governs <claim-id>`, `emily saga status [doc-id]`, `emily saga conflicts` -- query tools atop the existing claim ledger parser. Governance resolution walks the amends/supersedes graph (partial amendment takes priority over full supersession) to find which doc currently backs a given claim. `conflicts` adds two structural checks lint doesn't already catch as hard errors: amends referencing a claim ID that doesn't exist anywhere, and a claim whose governance has moved to a doc with lower authority than its original owner (e.g. a verified claim now backed only by a draft). Semantic conflict detection stays out of scope (S143-05, NORN-gated). 8 new tests, `go test ./...` clean, live-verified against the real `EMILY/docs/hq-specs` corpus (0 structural conflicts found).
 
