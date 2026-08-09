@@ -93,6 +93,12 @@ func runChangelogAdd(args []string) int {
 			return 1
 		}
 		msg := fmt.Sprintf("changelog(%s): %s", repoName, truncate(message, 60))
+		if sessionTag != "" {
+			// Founder, 2026-08-09: the session tag was landing in the
+			// CHANGELOG.md line (loggedMessage, above) but not in the git
+			// commit message itself -- fixed so both carry it.
+			msg = msg + "\n\nSession: " + sessionTag
+		}
 		commit := exec.Command("git", "-C", root, "commit", "-m", msg)
 		if out, err := commit.CombinedOutput(); err != nil {
 			if strings.Contains(string(out), "nothing to commit") {

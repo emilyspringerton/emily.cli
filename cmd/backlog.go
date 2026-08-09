@@ -348,6 +348,13 @@ func gitCommitBacklog(emilyRoot, msg string) error {
 	if out, err := add.CombinedOutput(); err != nil {
 		return fmt.Errorf("git add: %w: %s", err, out)
 	}
+	// Founder, 2026-08-09: the session tag needs to land in every commit
+	// message, not just Apples/CHANGELOG lines -- single shared helper, so
+	// every BACKLOG.md auto-commit (curate/promote/archive/etc.) picks it
+	// up for free.
+	if tag := currentSessionTag(emilyRoot); tag != "" {
+		msg = msg + "\n\nSession: " + tag
+	}
 	commit := exec.Command("git", "-C", emilyRoot, "commit", "-m", msg)
 	if out, err := commit.CombinedOutput(); err != nil {
 		// "nothing to commit" is not a real error.
