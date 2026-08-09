@@ -1,4 +1,5 @@
 ## 2026-08-09
+- fix(truncate): rune-aware, not byte-slice — the shared truncate() helper (17+ call sites incl. BACKLOG.md INTAKE QUEUE bullets) could cut mid-multibyte-UTF-8-char on any non-ASCII text, corrupting BACKLOG.md and making grep silently treat it as binary on some invocations. Found live while curating SKULDMARK observations today. (sess-20260809-1420-e9d3d7f8)
 - fix(git): 讓 emily changelog add 和 BACKLOG.md 自動 commit（curate/promote/archive 共用的 gitCommitBacklog）也在 commit message 裡帶上 session tag，之前只有 CHANGELOG.md 那行文字有標，git commit message 本身沒有 (sess-20260809-1420-e9d3d7f8)
 
 - fix(observe): 修復 emily observe 檔案名稱碰撞導致觀察紀錄靜默遺失的問題（同一秒內多次呼叫會覆寫前一筆），並為 observe/apples/changelog 補上一致的 session 標籤機制 (sess-20260809-1420-e9d3d7f8)
