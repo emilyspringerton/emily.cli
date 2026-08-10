@@ -105,6 +105,9 @@ func runStreamSync(emilyRoot string, dryRun bool, jsonOut bool) int {
 	}
 
 	msg := fmt.Sprintf("stream: sync %s", time.Now().UTC().Format("2006-01-02T15:04:05Z"))
+	if tag := currentSessionTag(emilyRoot); tag != "" {
+		msg = msg + "\n\nSession: " + tag
+	}
 	addCmd := exec.Command("git", "-C", emilyRoot, "add", "var/emily-stream.ndjson")
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "stream: git add: %v\n%s\n", err, out)
@@ -407,8 +410,15 @@ func updateManifest(gitDir string, id int64, payload *iduna.ApplePayload, verbos
 	commitCmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=emily-sync", "GIT_COMMITTER_NAME=emily-sync")
 	if err := commitCmd.Run(); err != nil {
 		// amend failed (e.g. nothing staged) — try a fresh commit
-		commitCmd2 := exec.Command("git", "-C", gitDir, "commit", "-m",
-			fmt.Sprintf("manifest: update — %d apples", m.Count))
+		freshMsg := fmt.Sprintf("manifest: update — %d apples", m.Count)
+		// gitDir is APPLES_GIT_DIR (a separate repo from EMILY) -- session tag always lives
+		// under EMILY_ROOT specifically, same reasoning as every other EMILY_ROOT-not-repoDir
+		// fix in this pass. Real gap found and fixed 2026-08-10 (founder: "ensure the entire
+		// monorepo always gets that session id in all commits").
+		if tag := currentSessionTag(emilyRootDefault()); tag != "" {
+			freshMsg = freshMsg + "\n\nSession: " + tag
+		}
+		commitCmd2 := exec.Command("git", "-C", gitDir, "commit", "-m", freshMsg)
 		commitCmd2.Env = commitCmd.Env
 		if err2 := commitCmd2.Run(); err2 != nil && verbose {
 			fmt.Printf("  [manifest] git commit: %v\n", err2)
@@ -464,6 +474,12 @@ func archiveAppleToGit(gitDir string, id int64, payload *iduna.ApplePayload, ver
 		return
 	}
 	commitMsg := fmt.Sprintf("apple: #%d %s — %s", id, payload.AppleType, truncate(payload.Title, 60))
+	// gitDir is APPLES_GIT_DIR (a separate repo from EMILY) -- session tag always lives under
+	// EMILY_ROOT specifically. Real gap found and fixed 2026-08-10 (founder: "ensure the entire
+	// monorepo always gets that session id in all commits").
+	if tag := currentSessionTag(emilyRootDefault()); tag != "" {
+		commitMsg = commitMsg + "\n\nSession: " + tag
+	}
 	commitCmd := exec.Command("git", "-C", gitDir, "commit", "-m", commitMsg)
 	commitCmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=emily-sync", "GIT_COMMITTER_NAME=emily-sync")
 	if err := commitCmd.Run(); err != nil {

@@ -116,6 +116,12 @@ func runBacklogArchive(args []string) int {
 	if !*noCommit {
 		exec.Command("git", "-C", cfg.EmilyRoot, "add", "BACKLOG.md", "DONE.md").Run()
 		msg := fmt.Sprintf("backlog: archive %d completed items → DONE.md (%s)", total, time.Now().UTC().Format("2006-01-02"))
+		// Real gap found and fixed 2026-08-10 (founder: "ensure the entire monorepo always
+		// gets that session id in all commits") -- same fix already applied to
+		// gitCommitBacklog/changelog's own commit paths, missing here until now.
+		if tag := currentSessionTag(cfg.EmilyRoot); tag != "" {
+			msg = msg + "\n\nSession: " + tag
+		}
 		out, err := exec.Command("git", "-C", cfg.EmilyRoot, "commit", "-m", msg).CombinedOutput()
 		if err != nil && !strings.Contains(string(out), "nothing to commit") {
 			fmt.Fprintf(os.Stderr, "git commit: %v (continuing)\n", err)
@@ -242,6 +248,9 @@ func runBacklogCompress(args []string) int {
 		exec.Command("git", "-C", cfg.EmilyRoot, "add", "GOLDEN.md").Run()
 		msg := fmt.Sprintf("emily: compress → GOLDEN.md (%d open, %d intake) %s",
 			totalOpen, len(intakeItems), time.Now().UTC().Format("2006-01-02"))
+		if tag := currentSessionTag(cfg.EmilyRoot); tag != "" {
+			msg = msg + "\n\nSession: " + tag
+		}
 		exec.Command("git", "-C", cfg.EmilyRoot, "commit", "-m", msg).Run()
 	}
 

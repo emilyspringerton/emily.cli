@@ -169,6 +169,18 @@ func runSessionCurrent(args []string) int {
 	return 0
 }
 
+// emilyRootDefault resolves EMILY_ROOT the same way internal/config's own
+// (unexported, cross-package-inaccessible) envOr default does -- used by
+// call sites that operate on a DIFFERENT repo (e.g. APPLES_GIT_DIR for the
+// Apples git backup sync) but still need the real EMILY session tag, which
+// always lives under EMILY_ROOT specifically, never the other repo.
+func emilyRootDefault() string {
+	if v := os.Getenv("EMILY_ROOT"); v != "" {
+		return v
+	}
+	return "/home/fatbaby/EMILY"
+}
+
 // currentSessionTag reads the active session tag (if any) for auto-tagging
 // Apples/changelog entries. Returns "" if no session has been started —
 // callers must fall back gracefully, never fail closed on a missing session.
