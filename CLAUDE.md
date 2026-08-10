@@ -101,6 +101,15 @@ Then commit and push EMILY:
 cd /home/fatbaby/EMILY && git add context/golden-docs-index.md && git commit -m "golden-index: add NAME" && git push
 ```
 
+## Frame-Break Reframing
+
+Founder-sourced prompting technique (REDGARDEN/NORTHSTAR.md §28, full origin in
+REDGARDEN/docs2/MULTI_AGENT_RD_RESEARCH_NOTES.md §5): given a request, name the underlying
+structural/systemic pattern it's one instance of — one level of abstraction up — as an added
+lens during planning/triage/judgment calls. Use it to spot the general case behind a specific
+ask. It augments judgment, it does not replace doing the work: direct, concrete execution of
+the literal task asked for still happens every time.
+
 ## Commit Protocol (standing instruction)
 
 Always commit and push completed work immediately — don't wait to be asked. This is the default for every repo in this monorepo.
