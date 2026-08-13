@@ -1,3 +1,7 @@
+## 2026-08-13
+
+- Added 'emily claire' command -- real but auditable log for CLAIRE.md's entropy/debris concept (git-tracked EMILY/claire-log.md + Apple type 'claire'), not the hidden/unaudited channel the doc's own text describes (sess-20260813-2154-dda37e8b)
+
 ## 2026-08-09
 - fix(truncate): rune-aware, not byte-slice — the shared truncate() helper (17+ call sites incl. BACKLOG.md INTAKE QUEUE bullets) could cut mid-multibyte-UTF-8-char on any non-ASCII text, corrupting BACKLOG.md and making grep silently treat it as binary on some invocations. Found live while curating SKULDMARK observations today. (sess-20260809-1420-e9d3d7f8)
 - fix(git): 讓 emily changelog add 和 BACKLOG.md 自動 commit（curate/promote/archive 共用的 gitCommitBacklog）也在 commit message 裡帶上 session tag，之前只有 CHANGELOG.md 那行文字有標，git commit message 本身沒有 (sess-20260809-1420-e9d3d7f8)
