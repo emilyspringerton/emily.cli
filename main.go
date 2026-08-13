@@ -108,6 +108,8 @@ func main() {
 		code = cmd.RunSaga(rest)
 	case "vault":
 		code = cmd.RunVault(rest)
+	case "claire":
+		code = cmd.RunClaire(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
