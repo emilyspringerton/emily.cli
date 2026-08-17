@@ -263,6 +263,8 @@ func RunPromptOVerse(args []string) int {
 		return runPromptOVerseBrainstorm(args[1:])
 	case "requeue":
 		return runPromptOVerseRequeue()
+	case "promote":
+		return runPromptOVersePromote(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "emily promptoverse: unknown subcommand %q\n\n", args[0])
 		return promptoverseUsage()
@@ -276,9 +278,11 @@ Subcommands:
   emily promptoverse add <subject> <count> [--force] [--slow] [--tag <style>]   Queue <count> styles applied to <subject>, then drain
   emily promptoverse work [--force] [--slow]           Drain whatever's already queued (e.g. resume after a 429)
   emily promptoverse queue                             List pending queue entries, oldest first
+  emily promptoverse requeue                            Re-pick styles for everything still queued (skips --tag-forced items)
   emily promptoverse styles                            List the reusable style registry
-  emily promptoverse brainstorm [--seed "a, b, c"]      Prompt GPT-2 to extend the style list, parse out candidate tags
+  emily promptoverse brainstorm [--seed "a, b, c"] [--sample N]   Prompt GPT-2 for candidate style tags
                                 [--max-tokens N] [--temperature F] [--via server|proxy|emily]
+  emily promptoverse promote <label> [--rare]           Turn a candidate/name into a real persisted style
 
 Example:
   emily promptoverse add ducks 6
@@ -343,6 +347,10 @@ type queueItem struct {
 	Subject    string    `json:"subject"`
 	StyleLabel string    `json:"style_label"`
 	EnqueuedAt time.Time `json:"enqueued_at"`
+	// Forced marks an item explicitly picked via --tag -- founder: "it
+	// should requeue on every run except if --tag hard coded a tag."
+	// Everything else is fair game for auto-requeue to re-pick.
+	Forced bool `json:"forced,omitempty"`
 }
 
 func queuePath(cfg *config.Config) string {
@@ -439,95 +447,133 @@ func appendQueue(path string, newItems []queueItem) error {
 	return writeQueue(path, append(existing, deduped...))
 }
 
-// runPromptOVerseRequeue re-picks the style for every item still pending
-// in the queue using the CURRENT selection logic, keeping each subject's
-// pending count and FIFO position the same -- founder, real-time: "i have
-// 100 gens queued already with the bad rng - can we have a requeue
-// function that rediscovers/marble-bag-rng-selects the tag styles."
-// Confirmed live: 8 robot, 8 whiteboard, 7 underwater, 5 outer space were
-// sitting in queue, artificially "fresh" to the old strict-ascending sort
-// because usage was only tallied from published nodes -- this command
-// clears that skew by recomputing usage from published nodes ONLY
-// (deliberately not counting the very picks being discarded) and running
-// a fresh marble-bag draw per subject, processed in original queue order
-// so later subjects in the same requeue see the earlier ones' new picks.
-// Deliberately does not touch --tag/rare/spontaneous-discovery -- this is
-// a bulk maintenance re-roll of the core draw, not a live `add`.
-func runPromptOVerseRequeue() int {
-	cfg, err := config.Resolve()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "config: %v\n", err)
-		return 1
-	}
+// requeueQueue re-picks the style for every NON-forced item still pending
+// using the CURRENT selection logic, in place -- original list order,
+// subject grouping, and item count are all preserved exactly; only the
+// StyleLabel of each non-forced item changes. Forced items (Forced==true,
+// set only by --tag) are left completely untouched -- founder: "it should
+// requeue on every run except if --tag hard coded a tag." Returns the
+// number of items actually re-picked (0 is a valid, common result -- an
+// all-forced or already-fresh queue).
+//
+// Originally built as a one-off fix (founder, real-time: "i have 100 gens
+// queued already with the bad rng - can we have a requeue function that
+// rediscovers/marble-bag-rng-selects the tag styles" -- confirmed live: 8
+// robot, 8 whiteboard, 7 underwater, 5 outer space were sitting in queue,
+// artificially "fresh" to the old strict-ascending sort because usage was
+// only tallied from published nodes) and then promoted to run
+// automatically at the top of every drainQueue, not just on manual
+// request.
+func requeueQueue(cfg *config.Config) (int, error) {
 	path := queuePath(cfg)
 	pending, err := loadQueue(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "read queue: %v\n", err)
-		return 1
+		return 0, fmt.Errorf("read queue: %w", err)
 	}
 	if len(pending) == 0 {
-		fmt.Println("queue is empty, nothing to requeue")
-		return 0
+		return 0, nil
 	}
 
 	client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
 	existingNodes, err := client.ListPromptOVerseNodes()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "list existing nodes: %v\n", err)
-		return 1
+		return 0, fmt.Errorf("list existing nodes: %w", err)
 	}
 	discovered, err := loadDiscoveredStyles(discoveredStylesPath(cfg))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "load discovered styles: %v\n", err)
-		return 1
+		return 0, fmt.Errorf("load discovered styles: %w", err)
 	}
 	pool := combinedStylePool(discovered)
 
-	order := make([]string, 0)
-	countBySubject := map[string]int{}
-	firstQueuedAt := map[string]time.Time{}
-	for _, it := range pending {
-		if _, seen := countBySubject[it.Subject]; !seen {
-			order = append(order, it.Subject)
-			firstQueuedAt[it.Subject] = it.EnqueuedAt
-		}
-		countBySubject[it.Subject]++
-	}
-
 	globalUsage := map[string]int{}
 	excludeBySubject := map[string]map[string]bool{}
+	ensureExclude := func(subject string) map[string]bool {
+		if excludeBySubject[subject] == nil {
+			excludeBySubject[subject] = map[string]bool{}
+		}
+		return excludeBySubject[subject]
+	}
 	for _, n := range existingNodes {
 		globalUsage[n.Label]++
-		if excludeBySubject[n.Subject] == nil {
-			excludeBySubject[n.Subject] = map[string]bool{}
+		ensureExclude(n.Subject)[n.Label] = true
+	}
+
+	wantBySubject := map[string]int{}
+	for _, it := range pending {
+		if it.Forced {
+			// A forced item still occupies its style for this subject --
+			// don't let a fresh pick collide with it.
+			ensureExclude(it.Subject)[it.StyleLabel] = true
+			globalUsage[it.StyleLabel]++
+			continue
 		}
-		excludeBySubject[n.Subject][n.Label] = true
+		wantBySubject[it.Subject]++
 	}
 
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	newItems := make([]queueItem, 0, len(pending))
-	for _, subject := range order {
-		want := countBySubject[subject]
+	freshBySubject := map[string][]style{}
+	shortfalls := map[string]int{}
+	for subject, want := range wantBySubject {
 		exclude := map[string]bool{}
 		for label := range excludeBySubject[subject] {
 			exclude[label] = true
 		}
 		picked := selectStylesForSubject(pool, want, exclude, globalUsage, rng)
 		for _, st := range picked {
-			globalUsage[st.Label]++ // so later subjects in this same requeue see it as used
-			newItems = append(newItems, queueItem{Subject: subject, StyleLabel: st.Label, EnqueuedAt: firstQueuedAt[subject]})
+			globalUsage[st.Label]++ // so later subjects in this same pass see it as used
 		}
+		freshBySubject[subject] = picked
 		if len(picked) < want {
-			fmt.Fprintf(os.Stderr, "warning: only found %d/%d new styles for %q -- registry may be running short for this subject\n",
-				len(picked), want, subject)
+			shortfalls[subject] = want - len(picked)
 		}
 	}
 
+	touched := 0
+	newItems := make([]queueItem, 0, len(pending))
+	for _, it := range pending {
+		if it.Forced {
+			newItems = append(newItems, it)
+			continue
+		}
+		fresh := freshBySubject[it.Subject]
+		if len(fresh) == 0 {
+			// Registry ran short for this subject -- drop the item rather
+			// than leave it with a stale/duplicate label.
+			touched++
+			continue
+		}
+		newItems = append(newItems, queueItem{Subject: it.Subject, StyleLabel: fresh[0].Label, EnqueuedAt: it.EnqueuedAt})
+		freshBySubject[it.Subject] = fresh[1:]
+		touched++
+	}
+
+	for subject, n := range shortfalls {
+		fmt.Fprintf(os.Stderr, "warning: only found enough new styles for %d/%d of %q's queued items -- registry may be running short for this subject\n",
+			wantBySubject[subject]-n, wantBySubject[subject], subject)
+	}
+
 	if err := writeQueue(path, newItems); err != nil {
-		fmt.Fprintf(os.Stderr, "write queue: %v\n", err)
+		return 0, fmt.Errorf("write queue: %w", err)
+	}
+	return touched, nil
+}
+
+func runPromptOVerseRequeue() int {
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
 	}
-	fmt.Printf("requeued %d subject(s), %d total item(s), using current marble-bag selection\n", len(order), len(newItems))
+	touched, err := requeueQueue(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "requeue: %v\n", err)
+		return 1
+	}
+	if touched == 0 {
+		fmt.Println("nothing to requeue (queue empty, or every pending item is --tag forced)")
+		return 0
+	}
+	fmt.Printf("requeued %d item(s) using current marble-bag selection\n", touched)
 	return 0
 }
 
@@ -730,6 +776,7 @@ func runPromptOVerseAdd(args []string) int {
 	// published/queued for this subject is NOT force-added (dedup still
 	// wins) -- it just falls through to the normal selection below.
 	selected := make([]style, 0, count)
+	forcedLabel := ""
 	if tag = strings.TrimSpace(tag); tag != "" {
 		switch {
 		case exclude[tag]:
@@ -764,6 +811,7 @@ func runPromptOVerseAdd(args []string) int {
 			}
 			selected = append(selected, forced)
 			exclude[tag] = true
+			forcedLabel = tag
 		}
 	}
 	selected = append(selected, selectStylesForSubject(pool, count-len(selected), exclude, globalUsage, rng)...)
@@ -860,7 +908,10 @@ func runPromptOVerseAdd(args []string) int {
 	now := time.Now().UTC()
 	newItems := make([]queueItem, 0, len(selected))
 	for _, st := range selected {
-		newItems = append(newItems, queueItem{Subject: subject, StyleLabel: st.Label, EnqueuedAt: now})
+		newItems = append(newItems, queueItem{
+			Subject: subject, StyleLabel: st.Label, EnqueuedAt: now,
+			Forced: forcedLabel != "" && st.Label == forcedLabel,
+		})
 	}
 	if err := appendQueue(path, newItems); err != nil {
 		fmt.Fprintf(os.Stderr, "enqueue: %v\n", err)
@@ -924,6 +975,22 @@ func drainQueue(cfg *config.Config, force, slow bool) int {
 	if len(items) == 0 {
 		fmt.Println("queue is empty, nothing to do")
 		return 0
+	}
+
+	// Auto-requeue: every drain re-picks non-forced items with the CURRENT
+	// selection logic before generating anything -- founder: "it should
+	// requeue on every run except if --tag hard coded a tag." Keeps a
+	// queue that's been sitting for a while (registry/usage shifted since
+	// it was enqueued) from draining stale picks.
+	if touched, err := requeueQueue(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "auto-requeue failed (continuing with the queue as-is): %v\n", err)
+	} else if touched > 0 {
+		fmt.Fprintf(os.Stderr, "auto-requeued %d item(s) before draining\n", touched)
+		items, err = loadQueue(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "read queue after auto-requeue: %v\n", err)
+			return 1
+		}
 	}
 
 	backoffPath := backoffStatePath(cfg)

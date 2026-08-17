@@ -31,6 +31,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -41,7 +42,8 @@ import (
 
 func runPromptOVerseBrainstorm(args []string) int {
 	fs := flag.NewFlagSet("promptoverse brainstorm", flag.ContinueOnError)
-	seed := fs.String("seed", "", "comma-separated seed style list (default: the full current registry)")
+	seed := fs.String("seed", "", "comma-separated seed style list (default: a random sample of the registry, see --sample)")
+	sampleN := fs.Int("sample", 5, "how many existing styles to randomly sample as the seed when --seed isn't given")
 	maxTokens := fs.Int("max-tokens", 60, "tokens to generate")
 	temperature := fs.Float64("temperature", 0.9, "sampling temperature -- 0.9 empirically kept the base model in list-continuation mode longer than 0.7")
 	via := fs.String("via", "server", "endpoint: server (:8088) | proxy (:8679) | emily (:8086)")
@@ -63,11 +65,18 @@ func runPromptOVerseBrainstorm(args []string) int {
 
 	seedList := strings.TrimSpace(*seed)
 	if seedList == "" {
+		// A random SAMPLE, not the full registry every time -- founder:
+		// "when i told you about it i gave you an example prompt but we
+		// can have any number of 4 [or so] prompts we already have as
+		// styles as a perturbation for gpt2 to start spitting out data."
+		// Different subsets nudge completions in different directions
+		// instead of the same always-full seed producing similar output
+		// run after run.
 		labels := make([]string, 0, len(pool))
 		for _, st := range pool {
 			labels = append(labels, st.Label)
 		}
-		seedList = strings.Join(labels, ", ")
+		seedList = strings.Join(sampleLabels(labels, *sampleN, rand.New(rand.NewSource(time.Now().UnixNano()))), ", ")
 	}
 	// Trailing ", " (not just ",") is what actually kept the base model in
 	// list-continuation mode in live testing -- without the space it tended
@@ -107,8 +116,27 @@ func runPromptOVerseBrainstorm(args []string) int {
 		fmt.Printf("  - %s\n", c)
 	}
 	fmt.Printf("\n%d candidate(s) parsed, %d not already in the registry.\n", len(candidates), newCount)
-	fmt.Println("Nothing added automatically -- these are for review; hand-add anything worth keeping to promptoverseStyles in cmd/promptoverse.go.")
+
+	added, recErr := recordCandidates(candidatesPath(cfg), candidates, seedList, existing)
+	if recErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to persist candidate tags: %v\n", recErr)
+	} else if added > 0 {
+		fmt.Printf("saved %d new candidate(s) for later review: emily promptoverse promote <label>\n", added)
+	}
+	fmt.Println("Nothing added automatically -- promote anything worth keeping with `emily promptoverse promote <label> [--rare]`.")
 	return 0
+}
+
+// sampleLabels picks up to n distinct labels at random, without
+// replacement -- if n >= len(labels), returns all of them (shuffled).
+// Pure aside from the rng parameter, testable without real randomness.
+func sampleLabels(labels []string, n int, rng *rand.Rand) []string {
+	pool := append([]string(nil), labels...)
+	rng.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
+	if n < len(pool) {
+		pool = pool[:n]
+	}
+	return pool
 }
 
 // parseStyleTags extracts plausible short style-name candidates from a raw

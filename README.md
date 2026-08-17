@@ -164,8 +164,10 @@ emily key unset NAME
 emily promptoverse add <subject> <count> [--force] [--slow] [--tag <style>]   # queue <count> styles, then drain
 emily promptoverse work [--force] [--slow]           # drain whatever's already queued (resume after a 429)
 emily promptoverse queue                             # list pending queue entries, oldest first
+emily promptoverse requeue                           # re-pick styles for everything still queued (skips --tag-forced items)
 emily promptoverse styles                            # list the reusable style registry
-emily promptoverse brainstorm [--seed "a, b, c"]      # prompt GPT-2 to extend the style list, parse out candidate tags
+emily promptoverse brainstorm [--seed "a, b, c"] [--sample N]   # prompt GPT-2 for candidate style tags
+emily promptoverse promote <label> [--rare]          # turn a candidate/name into a real persisted style
 ```
 
 Requests are queued FIFO to a durable file (`EMILY/var/promptoverse-queue.jsonl`), not fired
@@ -179,18 +181,32 @@ the 3rd or 4th generation in a run. Requires `gcloud` ADC authenticated on this 
 `IDUNA_AGENT_SECRET` for an agent with `promptoverse.write`.
 
 `add` deduplicates: it skips any style already published *or* already queued for that exact
-subject, and picks from what's left by ascending global usage (least-used styles across the whole
-gallery first), so repeated runs don't just keep re-rolling whichever style sits first in the
-registry. If every registry style is already used for a subject, it reports that and queues
-nothing. Duplicate/stale queue entries (e.g. from a race between two concurrent `add` calls, or
-left over from before this dedup existed) no longer jam the drain permanently — a "node already
-exists" response from IDUNA is skipped, not treated as a fatal failure.
+subject. What's left is picked by weighted random sampling *without* replacement — a "marble bag"
+weighted 1/(usage+1) — so under-used styles are more *likely*, never guaranteed, and a heavily-used
+style still gets an occasional pick. (An earlier version used a strict ascending-usage sort, which
+always filled in whichever single style had the globally lowest count — great until that style ran
+out of gas, at which point it never came back and a merely under-used style stayed just as starved
+as an over-used one. `emily promptoverse requeue` re-picks every currently-queued, non-`--tag`-forced
+item with the current logic — and every `add`/`work` run does this automatically before draining
+anyway, so a queue that's been sitting for a while never drains stale picks; run `requeue` by hand
+only if you want to force a refresh without also draining.) A handful of styles judged too subject-specific to compete for a slot every time (ice
+cream novelty, 1990s glossy rookie card, 2020s Topps Chrome refractor) are excluded by default, but
+the whole group gets one per-run roll to become eligible anyway — pity-adjusted (Fibonacci-scaled)
+so a long drought closes out fast rather than staying locked out. If every eligible registry style
+is already used for a subject, it reports that and queues nothing.  Duplicate/stale queue entries
+(e.g. from a race between two concurrent `add` calls, or left over from before this dedup existed)
+no longer jam the drain permanently — a "node already exists" response from IDUNA is skipped, not
+treated as a fatal failure.
 
 On the 2nd+ generation for a subject (never the first — a brand-new subject only uses the existing
 registry), if the registry ran short, `add` makes one attempt to discover a genuinely new style via
-Vertex AI's Gemini text model, using this box's existing `gcloud` ADC (no separate credential).
-The model can decline if nothing non-frivolous comes to mind — that's the common, expected outcome,
-not padding for padding's sake. Anything it does propose is persisted to
+Vertex AI's Gemini text model, using this box's existing `gcloud` ADC (no separate credential) —
+weighing whether the subject itself has a well-known iconic style not yet in the registry (e.g.
+"Aphrodite" suggesting "ancient Greek marble statue") as a real reason to propose something. Even
+when the batch is already full, there's a separate low, pity-adjusted chance a brand new style
+emerges anyway, swapped in for a slot — not just when `--tag` is used. The model can decline if
+nothing non-frivolous comes to mind — that's the common, expected outcome, not padding for
+padding's sake. Anything it does propose is persisted to
 `EMILY/var/promptoverse-discovered-styles.json` and becomes part of the registry for every future
 subject, not just the one that triggered it.
 
@@ -214,11 +230,21 @@ for the subject is ignored rather than force-added — dedup still wins.
 
 `emily promptoverse brainstorm` is a separate, standalone tool from the Vertex-based discovery
 above: it prompts GPT-2 (base checkpoint recommended — `emily gpt2 start --model base`; the
-fine-tuned checkpoint drifts into prose almost immediately) with the current registry as a
-comma-separated seed list and parses whatever plausible short tags come out of the completion.
-Nothing is added to the registry automatically — it's a review-only brainstorming aid, since base
-GPT-2 has no instruction-following and the vocabulary it drifts toward has no reason to stay
-on-topic.
+fine-tuned checkpoint drifts into prose almost immediately) with a random *sample* of the current
+registry (`--sample`, default 5 — a different subset each run nudges completions in different
+directions instead of the same always-full seed producing similar output every time; `--seed`
+overrides with an exact custom list) and parses whatever plausible short tags come out of the
+completion. Nothing is added to the registry automatically — it's a review-only brainstorming aid,
+since base GPT-2 has no instruction-following and the vocabulary it drifts toward has no reason to
+stay on-topic. Anything parsed and not already in the registry is saved to
+`EMILY/var/promptoverse-candidate-tags.json` for later review.
+
+`emily promptoverse promote <label> [--rare]` turns a candidate (or any arbitrary name) into a
+real, persisted style — same Vertex AI template-writing path `--tag` uses for a name that doesn't
+exist yet, just invoked directly instead of as a side effect of `add`. `--rare` marks it for the
+same "sometimes, not always" treatment as the hardcoded rare tier. Matching candidate records get
+marked promoted rather than deleted, so there's a durable trail of what came from brainstorm and
+what happened to it.
 
 ### Context / Northstar — golden-doc tooling
 

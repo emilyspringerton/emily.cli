@@ -1,6 +1,9 @@
 package cmd
 
-import "testing"
+import (
+	"math/rand"
+	"testing"
+)
 
 func TestParseStyleTags_RealCapturedListCompletion(t *testing.T) {
 	// Captured live 2026-08-17 against gpt2-base with the founder's exact
@@ -73,5 +76,48 @@ func TestParseStyleTags_EmptyInputYieldsEmptyOutput(t *testing.T) {
 	got := parseStyleTags("")
 	if len(got) != 0 {
 		t.Errorf("expected no tags from empty input, got %v", got)
+	}
+}
+
+func TestSampleLabels_ReturnsRequestedCount(t *testing.T) {
+	labels := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
+	rng := rand.New(rand.NewSource(1))
+	got := sampleLabels(labels, 5, rng)
+	if len(got) != 5 {
+		t.Fatalf("expected 5 labels, got %d: %v", len(got), got)
+	}
+	seen := map[string]bool{}
+	for _, g := range got {
+		if seen[g] {
+			t.Errorf("expected no duplicates in a single sample, got repeat %q", g)
+		}
+		seen[g] = true
+	}
+}
+
+func TestSampleLabels_NGreaterThanLenReturnsAllShuffled(t *testing.T) {
+	labels := []string{"a", "b", "c"}
+	rng := rand.New(rand.NewSource(1))
+	got := sampleLabels(labels, 10, rng)
+	if len(got) != 3 {
+		t.Errorf("expected all 3 labels when n exceeds the pool, got %d: %v", len(got), got)
+	}
+}
+
+func TestSampleLabels_VariesAcrossSeeds(t *testing.T) {
+	labels := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
+	first := sampleLabels(labels, 4, rand.New(rand.NewSource(1)))
+	second := sampleLabels(labels, 4, rand.New(rand.NewSource(2)))
+	same := len(first) == len(second)
+	if same {
+		for i := range first {
+			if first[i] != second[i] {
+				same = false
+				break
+			}
+		}
+	}
+	if same {
+		t.Error("expected different seeds to (almost certainly) produce a different sample, got identical results")
 	}
 }
