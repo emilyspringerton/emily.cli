@@ -1,4 +1,5 @@
 ## 2026-08-17
+- feat(promptoverse): --slow flag doubles all inter-request/backoff waits for add and work (sess-20260813-2154-dda37e8b)
 - feat(promptoverse): new 'brainstorm' subcommand prompts GPT-2 (base checkpoint) with the current style registry as a seed list and parses candidate tags from the completion, review-only, nothing auto-added. feat(promptoverse): add gained --tag <style> to force a specific style (creating + persisting it via Vertex AI if new) as slot 1, filling the rest via the existing dedup/variety selection. (sess-20260813-2154-dda37e8b)
 - feat(promptoverse): added Whiteboard, Paper-craft, Anime, Kawaii to the reusable style registry (14 -> 18 total) (sess-20260813-2154-dda37e8b)
 - feat(promptoverse): inter-request delay now grows +15s per successful request already made this run (capped +2m) on top of the 20s base, since API overload was still hitting around the 3rd-4th generation with a flat delay; cross-invocation backoff extra now applies to every gap in a run, not just the first request (sess-20260813-2154-dda37e8b)
