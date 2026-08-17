@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"math/rand"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -133,7 +134,8 @@ func TestQueue_WriteQueueThenLoad_EmptyMeansNoFile(t *testing.T) {
 
 func TestSelectStylesForSubject_SkipsExcluded(t *testing.T) {
 	exclude := map[string]bool{"1910s tobacco card": true, "claymation": true}
-	selected := selectStylesForSubject(promptoverseStyles, len(promptoverseStyles), exclude, map[string]int{})
+	rng := rand.New(rand.NewSource(1))
+	selected := selectStylesForSubject(promptoverseStyles, len(promptoverseStyles), exclude, map[string]int{}, rng)
 	for _, st := range selected {
 		if exclude[st.Label] {
 			t.Errorf("expected %q to be excluded (already published/queued for this subject), but it was selected", st.Label)
@@ -144,11 +146,17 @@ func TestSelectStylesForSubject_SkipsExcluded(t *testing.T) {
 	}
 }
 
-func TestSelectStylesForSubject_PrefersLeastGloballyUsed(t *testing.T) {
-	// Regression for the exact founder complaint: "it is favoring the
-	// tobacco card and the claymation every time" -- if those two are the
-	// most globally-used styles, a request for 1 new style must NOT pick
-	// either of them while a less-used style is available.
+func TestSelectStylesForSubject_FavorsLeastUsedButNotAlways(t *testing.T) {
+	// Regression for BOTH founder complaints in tension with each other:
+	// "it is favoring the tobacco card and the claymation every time" (the
+	// least-used style should usually win) and "it shouldnt always fill in
+	// the lowest tags... because it already has a lot of tobacco cards"
+	// (but not with absolute certainty -- a heavily-used style must still
+	// get an occasional look-in, "watercolor is fire but we havent
+	// generated one in quite a few gens now" being the same shape of
+	// complaint from the other direction). Weighted random sampling
+	// without replacement (the "marble bag") is exactly the smoothed-but-
+	// not-uniform middle the founder asked for.
 	globalUsage := map[string]int{
 		"1910s tobacco card": 20,
 		"claymation":         15,
@@ -160,9 +168,27 @@ func TestSelectStylesForSubject_PrefersLeastGloballyUsed(t *testing.T) {
 			exclude[st.Label] = true
 		}
 	}
-	selected := selectStylesForSubject(promptoverseStyles, 1, exclude, globalUsage)
-	if len(selected) != 1 || selected[0].Label != "underwater" {
-		t.Errorf("expected the single least-used style 'underwater' to be picked first, got %+v", selected)
+
+	const trials = 300
+	underwaterWins := 0
+	othersWinAtLeastOnce := false
+	for i := 0; i < trials; i++ {
+		rng := rand.New(rand.NewSource(int64(i)))
+		selected := selectStylesForSubject(promptoverseStyles, 1, exclude, globalUsage, rng)
+		if len(selected) != 1 {
+			t.Fatalf("expected exactly 1 style selected, got %d", len(selected))
+		}
+		if selected[0].Label == "underwater" {
+			underwaterWins++
+		} else {
+			othersWinAtLeastOnce = true
+		}
+	}
+	if underwaterWins < trials*6/10 {
+		t.Errorf("expected the least-used style to win a strong majority of %d trials, won %d", trials, underwaterWins)
+	}
+	if !othersWinAtLeastOnce {
+		t.Error("expected a more-used style to occasionally win too, got the least-used style every single trial")
 	}
 }
 
@@ -171,7 +197,8 @@ func TestSelectStylesForSubject_ZeroAvailableReturnsEmpty(t *testing.T) {
 	for _, st := range promptoverseStyles {
 		exclude[st.Label] = true
 	}
-	selected := selectStylesForSubject(promptoverseStyles, 5, exclude, map[string]int{})
+	rng := rand.New(rand.NewSource(1))
+	selected := selectStylesForSubject(promptoverseStyles, 5, exclude, map[string]int{}, rng)
 	if len(selected) != 0 {
 		t.Errorf("expected no styles left to select when every style is excluded, got %+v", selected)
 	}

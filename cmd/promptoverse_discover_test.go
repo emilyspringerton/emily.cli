@@ -130,8 +130,9 @@ func TestStyleFromDiscovered_ValidatesPlaceholder(t *testing.T) {
 func TestCombinedStylePool_IncludesHardcodedAndDiscovered(t *testing.T) {
 	discovered := []discoveredStyle{{Label: "origami", Kind: "surreal", Template: "%s made of origami."}}
 	pool := combinedStylePool(discovered)
-	if len(pool) != len(promptoverseStyles)+1 {
-		t.Fatalf("expected %d styles, got %d", len(promptoverseStyles)+1, len(pool))
+	wantBase := len(promptoverseStyles) + len(promptoverseRareStyles)
+	if len(pool) != wantBase+1 {
+		t.Fatalf("expected %d styles, got %d", wantBase+1, len(pool))
 	}
 	if _, ok := styleByLabelInPool(pool, "origami"); !ok {
 		t.Error("expected the discovered style to be present in the combined pool")
@@ -144,8 +145,9 @@ func TestCombinedStylePool_IncludesHardcodedAndDiscovered(t *testing.T) {
 func TestCombinedStylePool_SkipsMalformedDiscovered(t *testing.T) {
 	discovered := []discoveredStyle{{Label: "broken", Kind: "surreal", Template: "no placeholder"}}
 	pool := combinedStylePool(discovered)
-	if len(pool) != len(promptoverseStyles) {
-		t.Errorf("expected the malformed discovered style to be dropped, got %d styles (base %d)", len(pool), len(promptoverseStyles))
+	wantBase := len(promptoverseStyles) + len(promptoverseRareStyles)
+	if len(pool) != wantBase {
+		t.Errorf("expected the malformed discovered style to be dropped, got %d styles (base %d)", len(pool), wantBase)
 	}
 }
 

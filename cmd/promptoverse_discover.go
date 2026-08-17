@@ -46,6 +46,11 @@ type discoveredStyle struct {
 	Template      string    `json:"template"` // contains exactly one %s placeholder for the subject
 	DiscoveredFor string    `json:"discovered_for_subject"`
 	DiscoveredAt  time.Time `json:"discovered_at"`
+	// Rare marks a style as too subject-specific to compete for a slot
+	// every time -- same "sometimes, not always" treatment as
+	// promptoverseRareStyles, just for anything promoted or discovered
+	// after the fact rather than hardcoded at build time.
+	Rare bool `json:"rare,omitempty"`
 }
 
 func discoveredStylesPath(cfg *config.Config) string {
@@ -111,18 +116,41 @@ func styleFromDiscovered(ds discoveredStyle) (style, bool) {
 	}, true
 }
 
-// combinedStylePool is "the graph" selectStylesForSubject draws from: the
-// hardcoded registry plus every valid discovered style, hardcoded styles
-// first so ties in usage still prefer the proven set.
+// combinedStylePool is "the graph" -- every style resolvable by name,
+// including rare ones (hardcoded and discovered). It is NOT the same as
+// "every style eligible for selection right now": runPromptOVerseAdd
+// separately excludes rare labels by default unless a per-run roll
+// includes them, but drainQueue/styleByLabelInPool need to resolve a rare
+// style whenever one WAS selected and queued, so it belongs in the full
+// pool regardless. Hardcoded styles first so ties in usage still prefer
+// the proven set.
 func combinedStylePool(discovered []discoveredStyle) []style {
-	pool := make([]style, 0, len(promptoverseStyles)+len(discovered))
+	pool := make([]style, 0, len(promptoverseStyles)+len(promptoverseRareStyles)+len(discovered))
 	pool = append(pool, promptoverseStyles...)
+	pool = append(pool, promptoverseRareStyles...)
 	for _, ds := range discovered {
 		if st, ok := styleFromDiscovered(ds); ok {
 			pool = append(pool, st)
 		}
 	}
 	return pool
+}
+
+// rareStyleLabels is the set of Labels that should be treated as rare for
+// selection purposes -- hardcoded promptoverseRareStyles plus any
+// discovered style explicitly marked Rare (via `promote --rare` or a
+// future automatic path).
+func rareStyleLabels(discovered []discoveredStyle) map[string]bool {
+	labels := make(map[string]bool, len(promptoverseRareStyles)+len(discovered))
+	for _, st := range promptoverseRareStyles {
+		labels[st.Label] = true
+	}
+	for _, ds := range discovered {
+		if ds.Rare {
+			labels[ds.Label] = true
+		}
+	}
+	return labels
 }
 
 // extractGeminiText pulls the concatenated text parts out of a Vertex AI
@@ -208,7 +236,7 @@ Styles already in the registry:
 
 A subject just ran out of unused existing styles: %q.
 
-Propose exactly ONE new style ONLY if it is genuinely distinct, general-purpose, and would add real variety -- not a trivial variation of an existing one. If you cannot think of a good one, decline.
+Propose exactly ONE new style ONLY if it is genuinely distinct, general-purpose, and would add real variety -- not a trivial variation of an existing one. Give real weight to whether this SPECIFIC subject has a well-known, iconic visual treatment that isn't in the registry yet (e.g. a subject like "Aphrodite" strongly suggests a style like "ancient Greek marble statue" or "red-figure vase painting" if nothing like that exists yet) -- that's a genuinely good reason to propose something, not a coincidence to ignore. The style itself must still generalize to other subjects, though; it's the REASON to propose it that can be subject-inspired, not the style's applicability. If you cannot think of a good one, decline.
 
 Respond with ONLY raw JSON (no markdown fences, no commentary), in exactly one of these two shapes:
 {"propose": false}

@@ -33,11 +33,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -142,12 +142,11 @@ var promptoverseStyles = []style{
 	// baseball-card batch (S176-02) and promoted into the reusable registry
 	// here (founder: "ensure we have more variety for the categories that
 	// already exist like space and underwater etc") -- genuinely subject-
-	// agnostic transformation concepts, same bar as the 10 above. Two
-	// baseball-card-only siblings from that batch ("1990s glossy rookie
-	// card", "2020s Topps Chrome refractor" -- print-era variants of the
-	// tobacco-card concept, not their own transformation) and "ice cream
-	// novelty" (judged too baseball-card-specific when the registry was
-	// first built) are deliberately left out.
+	// agnostic transformation concepts, same bar as the 10 above. The
+	// batch's other 3 Labels (ice cream novelty, 1990s glossy rookie card,
+	// 2020s Topps Chrome refractor) are too baseball-card-specific to
+	// select every time, but not excluded outright either -- see
+	// promptoverseRareStyles below.
 	{"outer space", "surreal", func(s string) string {
 		return fmt.Sprintf("%s floating in outer space, starfield and nebula backdrop, "+
 			"dramatic rim lighting, astronaut-helmet reflection detail.", s)
@@ -189,8 +188,53 @@ var promptoverseStyles = []style{
 	}},
 }
 
+// promptoverseRareStyles are styles judged too subject-specific to compete
+// for a slot every time (they'd rarely be the best "under-used" pick for
+// an unrelated subject) but that shouldn't be permanently locked out
+// either -- founder: "the too specific ones should still trigger on a
+// somewhat rare basis... like the shiny tops [Topps]." selectStylesForSubject
+// treats these exactly like any other style once they clear
+// promptoverseRareStyleChance for a given `add` run (see runPromptOVerseAdd);
+// discoveredStyle.Rare marks the same behavior for anything promoted or
+// auto-discovered later, not just this hardcoded set.
+var promptoverseRareStyles = []style{
+	{"ice cream novelty", "surreal", func(s string) string {
+		return fmt.Sprintf("%s as an ice cream truck novelty treat, wax-paper wrapper, "+
+			"pastel swirl texture, cartoonish sprinkles, kitschy summer-fair photography.", s)
+	}},
+	{"1990s glossy rookie card", "historical", func(s string) string {
+		return fmt.Sprintf("%s rendered as a glossy 1990s rookie trading card, chrome foil "+
+			"border, bold neon accent color block, high-gloss studio photo finish.", s)
+	}},
+	{"2020s Topps Chrome refractor", "historical", func(s string) string {
+		return fmt.Sprintf("%s rendered as a 2020s Topps Chrome refractor trading card, "+
+			"rainbow prismatic foil shimmer, sharp modern photography, holographic "+
+			"refractor pattern across the surface.", s)
+	}},
+}
+
 func styleByLabel(label string) (style, bool) {
 	return styleByLabelInPool(promptoverseStyles, label)
+}
+
+// promptoverseRareStyleChance / promptoverseSpontaneousDiscoveryChance are
+// the "somewhat rare" probabilities behind two related asks: rare styles
+// competing for a slot sometimes instead of never (founder: "the too
+// specific ones should still trigger on a somewhat rare basis"), and a
+// brand new style occasionally emerging even without --tag (founder: "when
+// i am querying for new stuff i should occasionally see a new style
+// category emerge without using the --tag flag"). Same rough odds --
+// roughly 1 in 7 -- for both; no principled reason for them to differ yet.
+const (
+	promptoverseRareStyleChance            = 1.0 / 7.0
+	promptoverseSpontaneousDiscoveryChance = 1.0 / 7.0
+)
+
+// chanceTriggered is a pure, directly-testable wrapper around a random
+// draw vs. a probability -- kept separate from the actual math/rand call
+// so tests don't depend on real randomness.
+func chanceTriggered(roll, chance float64) bool {
+	return roll < chance
 }
 
 func styleByLabelInPool(pool []style, label string) (style, bool) {
@@ -217,6 +261,8 @@ func RunPromptOVerse(args []string) int {
 		return runPromptOVerseStyles()
 	case "brainstorm":
 		return runPromptOVerseBrainstorm(args[1:])
+	case "requeue":
+		return runPromptOVerseRequeue()
 	default:
 		fmt.Fprintf(os.Stderr, "emily promptoverse: unknown subcommand %q\n\n", args[0])
 		return promptoverseUsage()
@@ -393,6 +439,98 @@ func appendQueue(path string, newItems []queueItem) error {
 	return writeQueue(path, append(existing, deduped...))
 }
 
+// runPromptOVerseRequeue re-picks the style for every item still pending
+// in the queue using the CURRENT selection logic, keeping each subject's
+// pending count and FIFO position the same -- founder, real-time: "i have
+// 100 gens queued already with the bad rng - can we have a requeue
+// function that rediscovers/marble-bag-rng-selects the tag styles."
+// Confirmed live: 8 robot, 8 whiteboard, 7 underwater, 5 outer space were
+// sitting in queue, artificially "fresh" to the old strict-ascending sort
+// because usage was only tallied from published nodes -- this command
+// clears that skew by recomputing usage from published nodes ONLY
+// (deliberately not counting the very picks being discarded) and running
+// a fresh marble-bag draw per subject, processed in original queue order
+// so later subjects in the same requeue see the earlier ones' new picks.
+// Deliberately does not touch --tag/rare/spontaneous-discovery -- this is
+// a bulk maintenance re-roll of the core draw, not a live `add`.
+func runPromptOVerseRequeue() int {
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+	path := queuePath(cfg)
+	pending, err := loadQueue(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read queue: %v\n", err)
+		return 1
+	}
+	if len(pending) == 0 {
+		fmt.Println("queue is empty, nothing to requeue")
+		return 0
+	}
+
+	client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
+	existingNodes, err := client.ListPromptOVerseNodes()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "list existing nodes: %v\n", err)
+		return 1
+	}
+	discovered, err := loadDiscoveredStyles(discoveredStylesPath(cfg))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load discovered styles: %v\n", err)
+		return 1
+	}
+	pool := combinedStylePool(discovered)
+
+	order := make([]string, 0)
+	countBySubject := map[string]int{}
+	firstQueuedAt := map[string]time.Time{}
+	for _, it := range pending {
+		if _, seen := countBySubject[it.Subject]; !seen {
+			order = append(order, it.Subject)
+			firstQueuedAt[it.Subject] = it.EnqueuedAt
+		}
+		countBySubject[it.Subject]++
+	}
+
+	globalUsage := map[string]int{}
+	excludeBySubject := map[string]map[string]bool{}
+	for _, n := range existingNodes {
+		globalUsage[n.Label]++
+		if excludeBySubject[n.Subject] == nil {
+			excludeBySubject[n.Subject] = map[string]bool{}
+		}
+		excludeBySubject[n.Subject][n.Label] = true
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	newItems := make([]queueItem, 0, len(pending))
+	for _, subject := range order {
+		want := countBySubject[subject]
+		exclude := map[string]bool{}
+		for label := range excludeBySubject[subject] {
+			exclude[label] = true
+		}
+		picked := selectStylesForSubject(pool, want, exclude, globalUsage, rng)
+		for _, st := range picked {
+			globalUsage[st.Label]++ // so later subjects in this same requeue see it as used
+			newItems = append(newItems, queueItem{Subject: subject, StyleLabel: st.Label, EnqueuedAt: firstQueuedAt[subject]})
+		}
+		if len(picked) < want {
+			fmt.Fprintf(os.Stderr, "warning: only found %d/%d new styles for %q -- registry may be running short for this subject\n",
+				len(picked), want, subject)
+		}
+	}
+
+	if err := writeQueue(path, newItems); err != nil {
+		fmt.Fprintf(os.Stderr, "write queue: %v\n", err)
+		return 1
+	}
+	fmt.Printf("requeued %d subject(s), %d total item(s), using current marble-bag selection\n", len(order), len(newItems))
+	return 0
+}
+
 func runPromptOVerseQueueList() int {
 	cfg, err := config.Resolve()
 	if err != nil {
@@ -419,28 +557,50 @@ func runPromptOVerseQueueList() int {
 // subject, skipping every Label in `exclude` (styles already published OR
 // already queued for this exact subject -- founder: "we should not prompt
 // for the tobacco card with that exact same prompt if we already have
-// one"), and ordering the remainder by ascending global usage count so a
-// run prefers styles under-used across the WHOLE gallery instead of always
-// the first entries in the registry (founder: "it is favoring the tobacco
-// card and the claymation every time ensure we have more variety"). Ties
-// (equal usage) keep pool order, via SliceStable. pool is normally
-// combinedStylePool's output (hardcoded registry + discovered styles), not
-// promptoverseStyles directly -- "always add to the graph first" means the
-// graph already includes anything discovered on a prior run.
-func selectStylesForSubject(pool []style, count int, exclude map[string]bool, globalUsage map[string]int) []style {
-	candidates := make([]style, 0, len(pool))
+// one"). The remainder is chosen by weighted random sampling WITHOUT
+// replacement, weighted 1/(usage+1) -- under-used styles are more LIKELY
+// to be picked, not guaranteed to be. A strict ascending-usage sort was
+// tried first and was wrong in practice: it always filled in whichever
+// single style had the globally lowest count, so once one style
+// accumulated a lead (founder's example: tobacco card) it could never
+// come back, and an under-but-not-least-used style (founder's example:
+// "watercolor is fire but we havent generated one in quite a few gens
+// now") stayed starved just as hard as an over-used one.
+// Founder: "it should favor the less represented styles but also be
+// random." pool is normally combinedStylePool's output (hardcoded
+// registry + discovered styles) -- "always add to the graph first" means
+// the graph already includes anything discovered on a prior run.
+func selectStylesForSubject(pool []style, count int, exclude map[string]bool, globalUsage map[string]int, rng *rand.Rand) []style {
+	remaining := make([]style, 0, len(pool))
 	for _, st := range pool {
 		if !exclude[st.Label] {
-			candidates = append(candidates, st)
+			remaining = append(remaining, st)
 		}
 	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		return globalUsage[candidates[i].Label] < globalUsage[candidates[j].Label]
-	})
-	if count < len(candidates) {
-		candidates = candidates[:count]
+
+	selected := make([]style, 0, count)
+	for len(selected) < count && len(remaining) > 0 {
+		weights := make([]float64, len(remaining))
+		total := 0.0
+		for i, st := range remaining {
+			w := 1.0 / float64(globalUsage[st.Label]+1)
+			weights[i] = w
+			total += w
+		}
+		draw := rng.Float64() * total
+		idx := len(remaining) - 1 // float rounding safety net -- last item if the loop below never hits
+		cum := 0.0
+		for i, w := range weights {
+			cum += w
+			if draw < cum {
+				idx = i
+				break
+			}
+		}
+		selected = append(selected, remaining[idx])
+		remaining = append(remaining[:idx], remaining[idx+1:]...)
 	}
-	return candidates
+	return selected
 }
 
 func runPromptOVerseAdd(args []string) int {
@@ -519,9 +679,46 @@ func runPromptOVerseAdd(args []string) int {
 		return 1
 	}
 	for _, it := range pending {
+		// Counted toward globalUsage regardless of subject -- founder,
+		// real-time: "tag selection is wonky you are including underwater
+		// and robot and outerspace over and over again." Root cause: usage
+		// was only tallied from PUBLISHED nodes, so a style sitting queued
+		// dozens of times behind a slow drain still looked "fresh" (0
+		// uses) to every new `add` call and kept winning the least-used
+		// tiebreak. A style is "used" the moment it's queued, not only
+		// once it's actually published.
+		globalUsage[it.StyleLabel]++
 		if it.Subject == subject {
 			exclude[it.StyleLabel] = true
 			subjectHasPriorGeneration = true
+		}
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	pityPath := pityStatePath(cfg)
+	pity, err := loadPityState(pityPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load pity state: %v\n", err)
+		return 1
+	}
+
+	// Rare styles (promptoverseRareStyles + discoveredStyle.Rare) are
+	// excluded by default -- competing for a slot every time would defeat
+	// "rare" -- but the whole group gets one per-run roll to become
+	// eligible anyway (founder: "the too specific ones should still
+	// trigger on a somewhat rare basis"), and that roll's odds escalate
+	// the longer it's been since the last hit (founder: "like the same way
+	// a legendary pull percentage goes up after opening a certain number
+	// of packs" -- see promptoverse_pity.go). A style explicitly requested
+	// via --tag below bypasses this entirely, same as it bypasses
+	// everything else about normal selection.
+	rareTriggered := chanceTriggered(rng.Float64(), pityAdjustedChance(promptoverseRareStyleChance, pity.RareStyleRunsSinceTrigger))
+	if rareTriggered {
+		pity.RareStyleRunsSinceTrigger = 0
+	} else {
+		pity.RareStyleRunsSinceTrigger++
+		for label := range rareStyleLabels(discovered) {
+			exclude[label] = true
 		}
 	}
 
@@ -569,7 +766,7 @@ func runPromptOVerseAdd(args []string) int {
 			exclude[tag] = true
 		}
 	}
-	selected = append(selected, selectStylesForSubject(pool, count-len(selected), exclude, globalUsage)...)
+	selected = append(selected, selectStylesForSubject(pool, count-len(selected), exclude, globalUsage, rng)...)
 
 	// Style discovery: only on the 2nd+ generation for a subject (a brand
 	// new subject uses the existing registry only, same as the original
@@ -603,6 +800,52 @@ func runPromptOVerseAdd(args []string) int {
 				}
 			}
 		}
+	} else if subjectHasPriorGeneration {
+		// Spontaneous discovery: the batch was already full, so this isn't
+		// filling a gap -- founder: "when i am querying for new stuff i
+		// should occasionally see a new style category emerge without
+		// using the --tag flag," with the same pity escalation as the rare-
+		// style roll above. On a hit, swap the newly discovered style in
+		// for the last selected slot (arbitrary but simple -- the marble-
+		// bag draw above doesn't rank its picks by preference, so there's
+		// no principled "least valuable" slot to target instead).
+		discoveryTriggered := chanceTriggered(rng.Float64(), pityAdjustedChance(promptoverseSpontaneousDiscoveryChance, pity.DiscoveryRunsSinceTrigger))
+		if !discoveryTriggered {
+			pity.DiscoveryRunsSinceTrigger++
+		} else {
+			token, tokErr := gcloudAccessToken()
+			if tokErr != nil {
+				fmt.Fprintf(os.Stderr, "spontaneous style discovery skipped (gcloud auth: %v)\n", tokErr)
+			} else {
+				labels := make([]string, 0, len(pool))
+				for _, st := range pool {
+					labels = append(labels, st.Label)
+				}
+				proposed, discErr := maybeDiscoverStyle(token, subject, labels)
+				switch {
+				case discErr != nil:
+					fmt.Fprintf(os.Stderr, "spontaneous style discovery attempt failed (continuing without it): %v\n", discErr)
+					pity.DiscoveryRunsSinceTrigger++
+				case proposed == nil:
+					// The model declining doesn't count as a "miss" for
+					// pity purposes -- the roll DID trigger, the model
+					// just had nothing good to propose this time.
+					pity.DiscoveryRunsSinceTrigger = 0
+				default:
+					pity.DiscoveryRunsSinceTrigger = 0
+					if err := appendDiscoveredStyle(discoveredPath, *proposed); err != nil {
+						fmt.Fprintf(os.Stderr, "failed to persist discovered style %q: %v\n", proposed.Label, err)
+					} else if st, ok := styleFromDiscovered(*proposed); ok && len(selected) > 0 {
+						fmt.Printf("a new style category emerged and replaced a slot: %q\n", proposed.Label)
+						selected[len(selected)-1] = st
+					}
+				}
+			}
+		}
+	}
+
+	if err := savePityState(pityPath, pity); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to persist pity state: %v\n", err)
 	}
 
 	if len(selected) == 0 {
