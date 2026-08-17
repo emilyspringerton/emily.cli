@@ -364,10 +364,21 @@ func (c *Client) PostPromptOVerseNode(n PromptOVerseNode) (url string, err error
 	return result.URL, nil
 }
 
-// GetPromptOVerseLabels returns the distinct style labels already published,
-// most-recently-used first -- used by `emily promptoverse add` to pick which
-// existing reusable styles to apply to a new subject.
-func (c *Client) GetPromptOVerseLabels() ([]string, error) {
+// PromptOVerseNodeSummary is the (subject, label) pair for one existing
+// node -- enough for `emily promptoverse add` to dedupe against and weigh
+// style variety, without pulling full prompts/images.
+type PromptOVerseNodeSummary struct {
+	Subject string `json:"subject"`
+	Label   string `json:"label"`
+}
+
+// ListPromptOVerseNodes returns the (subject, label) pair for every
+// published node -- used by `emily promptoverse add` to (a) skip any
+// subject+style combination that already exists (founder: "we should not
+// prompt for the tobacco card with that exact same prompt if we already
+// have one") and (b) prefer globally under-used styles so runs don't keep
+// favoring whichever styles happen to sit first in the registry.
+func (c *Client) ListPromptOVerseNodes() ([]PromptOVerseNodeSummary, error) {
 	if err := c.Auth(); err != nil {
 		return nil, err
 	}
@@ -385,23 +396,12 @@ func (c *Client) GetPromptOVerseLabels() ([]string, error) {
 	}
 
 	var wrapped struct {
-		Nodes []struct {
-			Label string `json:"label"`
-		} `json:"nodes"`
+		Nodes []PromptOVerseNodeSummary `json:"nodes"`
 	}
 	if err := json.Unmarshal(raw, &wrapped); err != nil {
 		return nil, fmt.Errorf("list promptoverse nodes decode: %w", err)
 	}
-
-	seen := map[string]bool{}
-	var labels []string
-	for _, n := range wrapped.Nodes {
-		if n.Label != "" && !seen[n.Label] {
-			seen[n.Label] = true
-			labels = append(labels, n.Label)
-		}
-	}
-	return labels, nil
+	return wrapped.Nodes, nil
 }
 
 func filterByType(apples []Apple, appleType string) []Apple {

@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -112,6 +113,32 @@ var promptoverseStyles = []style{
 	{"watercolor sketchbook", "surreal", func(s string) string {
 		return fmt.Sprintf("%s in loose watercolor sketchbook style, visible brushstrokes and "+
 			"paper texture, soft bleeding pigment.", s)
+	}},
+	// The next 4 were proven out as one-off Labels in the original 20-prompt
+	// baseball-card batch (S176-02) and promoted into the reusable registry
+	// here (founder: "ensure we have more variety for the categories that
+	// already exist like space and underwater etc") -- genuinely subject-
+	// agnostic transformation concepts, same bar as the 10 above. Two
+	// baseball-card-only siblings from that batch ("1990s glossy rookie
+	// card", "2020s Topps Chrome refractor" -- print-era variants of the
+	// tobacco-card concept, not their own transformation) and "ice cream
+	// novelty" (judged too baseball-card-specific when the registry was
+	// first built) are deliberately left out.
+	{"outer space", "surreal", func(s string) string {
+		return fmt.Sprintf("%s floating in outer space, starfield and nebula backdrop, "+
+			"dramatic rim lighting, astronaut-helmet reflection detail.", s)
+	}},
+	{"underwater", "surreal", func(s string) string {
+		return fmt.Sprintf("%s submerged underwater, refracted sunbeams through water, "+
+			"floating bubbles, soft blue-green caustic lighting.", s)
+	}},
+	{"robot", "surreal", func(s string) string {
+		return fmt.Sprintf("%s reimagined as a chrome robot, exposed servos and rivets, "+
+			"glowing optical sensors, industrial sci-fi design.", s)
+	}},
+	{"made of candy", "surreal", func(s string) string {
+		return fmt.Sprintf("%s sculpted entirely out of candy -- gumdrops, licorice, and "+
+			"hard-candy shell -- glossy sugar-glaze texture, bright saturated colors.", s)
 	}},
 }
 
@@ -276,6 +303,31 @@ func runPromptOVerseQueueList() int {
 	return 0
 }
 
+// selectStylesForSubject picks up to `count` styles from the registry to
+// apply to a subject, skipping every Label in `exclude` (styles already
+// published OR already queued for this exact subject -- founder: "we
+// should not prompt for the tobacco card with that exact same prompt if we
+// already have one"), and ordering the remainder by ascending global usage
+// count so a run prefers styles under-used across the WHOLE gallery instead
+// of always the first entries in the registry (founder: "it is favoring the
+// tobacco card and the claymation every time ensure we have more variety").
+// Ties (equal usage) keep registry order, via SliceStable.
+func selectStylesForSubject(count int, exclude map[string]bool, globalUsage map[string]int) []style {
+	candidates := make([]style, 0, len(promptoverseStyles))
+	for _, st := range promptoverseStyles {
+		if !exclude[st.Label] {
+			candidates = append(candidates, st)
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return globalUsage[candidates[i].Label] < globalUsage[candidates[j].Label]
+	})
+	if count < len(candidates) {
+		candidates = candidates[:count]
+	}
+	return candidates
+}
+
 func runPromptOVerseAdd(args []string) int {
 	if len(args) != 2 {
 		fmt.Fprintln(os.Stderr, "usage: emily promptoverse add <subject> <count>")
@@ -287,28 +339,60 @@ func runPromptOVerseAdd(args []string) int {
 		fmt.Fprintf(os.Stderr, "emily promptoverse add: <count> must be a positive integer, got %q\n", args[1])
 		return 1
 	}
-	if count > len(promptoverseStyles) {
-		fmt.Printf("only %d styles in the registry — queuing all of them (run 'emily promptoverse styles' to see the list)\n", len(promptoverseStyles))
-		count = len(promptoverseStyles)
-	}
 
 	cfg, err := config.Resolve()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
 	}
+	client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
+	existing, err := client.ListPromptOVerseNodes()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "list existing nodes (needed to dedupe): %v\n", err)
+		return 1
+	}
+
+	exclude := map[string]bool{}
+	globalUsage := map[string]int{}
+	for _, n := range existing {
+		globalUsage[n.Label]++
+		if n.Subject == subject {
+			exclude[n.Label] = true
+		}
+	}
+
+	path := queuePath(cfg)
+	pending, err := loadQueue(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read queue (needed to dedupe): %v\n", err)
+		return 1
+	}
+	for _, it := range pending {
+		if it.Subject == subject {
+			exclude[it.StyleLabel] = true
+		}
+	}
+
+	selected := selectStylesForSubject(count, exclude, globalUsage)
+	if len(selected) == 0 {
+		fmt.Printf("already have (published or queued) every reusable style for %q — nothing new to queue\n", subject)
+		return 0
+	}
+	if len(selected) < count {
+		fmt.Printf("only %d new style(s) available for %q (%d already published or queued) — queuing what's left\n",
+			len(selected), subject, count-len(selected))
+	}
 
 	now := time.Now().UTC()
-	newItems := make([]queueItem, 0, count)
-	for _, st := range promptoverseStyles[:count] {
+	newItems := make([]queueItem, 0, len(selected))
+	for _, st := range selected {
 		newItems = append(newItems, queueItem{Subject: subject, StyleLabel: st.Label, EnqueuedAt: now})
 	}
-	path := queuePath(cfg)
 	if err := appendQueue(path, newItems); err != nil {
 		fmt.Fprintf(os.Stderr, "enqueue: %v\n", err)
 		return 1
 	}
-	fmt.Printf("queued %d requests for %q (FIFO — behind anything already pending)\n", count, subject)
+	fmt.Printf("queued %d requests for %q (FIFO — behind anything already pending)\n", len(newItems), subject)
 
 	return drainQueue(cfg)
 }

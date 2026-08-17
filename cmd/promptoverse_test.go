@@ -109,6 +109,60 @@ func TestQueue_WriteQueueThenLoad_EmptyMeansNoFile(t *testing.T) {
 	}
 }
 
+func TestSelectStylesForSubject_SkipsExcluded(t *testing.T) {
+	exclude := map[string]bool{"1910s tobacco card": true, "claymation": true}
+	selected := selectStylesForSubject(len(promptoverseStyles), exclude, map[string]int{})
+	for _, st := range selected {
+		if exclude[st.Label] {
+			t.Errorf("expected %q to be excluded (already published/queued for this subject), but it was selected", st.Label)
+		}
+	}
+	if len(selected) != len(promptoverseStyles)-2 {
+		t.Errorf("expected %d selectable styles, got %d", len(promptoverseStyles)-2, len(selected))
+	}
+}
+
+func TestSelectStylesForSubject_PrefersLeastGloballyUsed(t *testing.T) {
+	// Regression for the exact founder complaint: "it is favoring the
+	// tobacco card and the claymation every time" -- if those two are the
+	// most globally-used styles, a request for 1 new style must NOT pick
+	// either of them while a less-used style is available.
+	globalUsage := map[string]int{
+		"1910s tobacco card": 20,
+		"claymation":         15,
+		"underwater":         0,
+	}
+	exclude := map[string]bool{}
+	for _, st := range promptoverseStyles {
+		if st.Label != "1910s tobacco card" && st.Label != "claymation" && st.Label != "underwater" {
+			exclude[st.Label] = true
+		}
+	}
+	selected := selectStylesForSubject(1, exclude, globalUsage)
+	if len(selected) != 1 || selected[0].Label != "underwater" {
+		t.Errorf("expected the single least-used style 'underwater' to be picked first, got %+v", selected)
+	}
+}
+
+func TestSelectStylesForSubject_ZeroAvailableReturnsEmpty(t *testing.T) {
+	exclude := map[string]bool{}
+	for _, st := range promptoverseStyles {
+		exclude[st.Label] = true
+	}
+	selected := selectStylesForSubject(5, exclude, map[string]int{})
+	if len(selected) != 0 {
+		t.Errorf("expected no styles left to select when every style is excluded, got %+v", selected)
+	}
+}
+
+func TestSelectStylesForSubject_IncludesNewVarietyStyles(t *testing.T) {
+	for _, want := range []string{"outer space", "underwater", "robot", "made of candy"} {
+		if _, ok := styleByLabel(want); !ok {
+			t.Errorf("expected %q to be a registered style (promoted from the original baseball-card batch for variety)", want)
+		}
+	}
+}
+
 func TestQueue_WriteQueueOverwritesCompletely(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "queue.jsonl")
 	if err := writeQueue(path, []queueItem{

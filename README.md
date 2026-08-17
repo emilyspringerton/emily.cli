@@ -173,6 +173,12 @@ requests wait their turn in arrival order. Draining stops (not retries) on a rat
 the remainder queued for `emily promptoverse work` later. Requires `gcloud` ADC authenticated on
 this box and `IDUNA_AGENT_SECRET` for an agent with `promptoverse.write`.
 
+`add` deduplicates: it skips any style already published *or* already queued for that exact
+subject, and picks from what's left by ascending global usage (least-used styles across the whole
+gallery first), so repeated runs don't just keep re-rolling whichever style sits first in the
+registry. If every registry style is already used for a subject, it reports that and queues
+nothing.
+
 ### Context / Northstar — golden-doc tooling
 
 ```bash
