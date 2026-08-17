@@ -1048,6 +1048,20 @@ func drainQueue(cfg *config.Config, force, slow bool) int {
 		prompt := st.Prompt(it.Subject)
 		img, err := vertexGenerateImage(token, prompt)
 		if err != nil {
+			if errors.Is(err, errVertexContentBlocked) {
+				// A permanent policy rejection, not a transient failure --
+				// retrying gets the identical result forever, which would
+				// otherwise jam every other queued request behind it
+				// (founder-visible, 2026-08-17: "anime x Rapunzel" hit
+				// this and looked exactly like an API-key problem).
+				fmt.Fprintf(os.Stderr, "  SKIPPED (content policy): %s x %s -- %v\n", st.Label, it.Subject, err)
+				skipped++
+				items = items[1:]
+				if err := writeQueue(path, items); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to persist queue after skip: %v\n", err)
+				}
+				continue
+			}
 			fmt.Fprintf(os.Stderr, "  FAILED: %v\n", err)
 			fmt.Fprintf(os.Stderr, "stopping drain -- %d item(s) still queued, left in place for 'emily promptoverse work' later\n", len(items))
 			recordBackoffFailure(backoffPath)
@@ -1172,7 +1186,20 @@ func vertexGenerateImage(token, prompt string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("vertex ai %d: %s", resp.StatusCode, trimMsgPO(raw))
 	}
+	return parseVertexImageResponse(raw)
+}
 
+// parseVertexImageResponse pulls the base64 image out of a successful (200)
+// Vertex AI generateContent response, or explains why there isn't one.
+// Split out from vertexGenerateImage so the finishReason handling is
+// testable against real captured response bodies without a live network
+// call. No image in the response -- surface WHY, not just that it's
+// missing. Live example that prompted this (2026-08-17): "no image data in
+// response" alone looked like an auth/key problem; the real cause was
+// finishReason "IMAGE_PROHIBITED_CONTENT" (Vertex's own third-party IP
+// filter, triggered by a subject like "Rapunzel") -- a real, expected
+// platform decision, not a bug, but undiagnosable without this text.
+func parseVertexImageResponse(raw []byte) ([]byte, error) {
 	var parsed struct {
 		Candidates []struct {
 			Content struct {
@@ -1182,6 +1209,8 @@ func vertexGenerateImage(token, prompt string) ([]byte, error) {
 					} `json:"inlineData"`
 				} `json:"parts"`
 			} `json:"content"`
+			FinishReason  string `json:"finishReason"`
+			FinishMessage string `json:"finishMessage"`
 		} `json:"candidates"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
@@ -1194,7 +1223,36 @@ func vertexGenerateImage(token, prompt string) ([]byte, error) {
 			}
 		}
 	}
+	for _, c := range parsed.Candidates {
+		if c.FinishReason != "" && c.FinishReason != "STOP" {
+			msg := c.FinishReason
+			if c.FinishMessage != "" {
+				msg += ": " + c.FinishMessage
+			}
+			if vertexContentBlockReasons[c.FinishReason] {
+				return nil, fmt.Errorf("%w: %s", errVertexContentBlocked, msg)
+			}
+			return nil, fmt.Errorf("no image data in response (%s)", msg)
+		}
+	}
 	return nil, fmt.Errorf("no image data in response")
+}
+
+// errVertexContentBlocked marks a PERMANENT rejection -- Vertex's own
+// safety/IP-content policy declined this exact prompt, not a transient
+// failure retrying would fix. drainQueue skips-and-continues on this
+// specific error instead of stopping the whole run, same shape as
+// iduna.ErrPromptOVerseNodeExists. Discovered live (2026-08-17): "anime x
+// Rapunzel" hit IMAGE_PROHIBITED_CONTENT (a real Disney-IP filter) and,
+// before this fix, looked exactly like an auth failure while also
+// permanently jamming everything queued behind it.
+var errVertexContentBlocked = errors.New("vertex ai: content policy blocked this prompt")
+
+var vertexContentBlockReasons = map[string]bool{
+	"IMAGE_PROHIBITED_CONTENT": true,
+	"PROHIBITED_CONTENT":       true,
+	"SAFETY":                   true,
+	"RECITATION":               true,
 }
 
 func slugifyPO(s string) string {
