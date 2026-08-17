@@ -30,6 +30,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -51,12 +52,14 @@ import (
 // exactly one working setup right now and hardcoding it is more honest than
 // pretending this is portable to an unconfigured box.
 const (
-	promptoverseVertexProject = "project-d24a71e9-2daf-4b2d-917"
-	promptoverseVertexRegion  = "us-central1"
-	promptoverseVertexModel   = "gemini-2.5-flash-image"
+	promptoverseVertexProject   = "project-d24a71e9-2daf-4b2d-917"
+	promptoverseVertexRegion    = "us-central1"
+	promptoverseVertexModel     = "gemini-2.5-flash-image"
+	promptoverseVertexTextModel = "gemini-2.5-flash" // text-only, used for style discovery -- see promptoverse_discover.go
 
-	promptoverseInterRequestDelay = 6 * time.Second // spacing between successful Vertex AI calls
-	promptoverseQueueFileName     = "promptoverse-queue.jsonl"
+	promptoverseInterRequestDelay  = 6 * time.Second // spacing between successful Vertex AI calls
+	promptoverseQueueFileName      = "promptoverse-queue.jsonl"
+	promptoverseDiscoveredFileName = "promptoverse-discovered-styles.json"
 )
 
 // style is one entry in the reusable style registry -- the "subcategory"
@@ -143,7 +146,11 @@ var promptoverseStyles = []style{
 }
 
 func styleByLabel(label string) (style, bool) {
-	for _, st := range promptoverseStyles {
+	return styleByLabelInPool(promptoverseStyles, label)
+}
+
+func styleByLabelInPool(pool []style, label string) (style, bool) {
+	for _, st := range pool {
 		if st.Label == label {
 			return st, true
 		}
@@ -197,6 +204,24 @@ func runPromptOVerseStyles() int {
 	fmt.Println("Reusable style registry:")
 	for i, st := range promptoverseStyles {
 		fmt.Printf("  %2d. %s (%s)\n", i+1, st.Label, st.Kind)
+	}
+
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+	discovered, err := loadDiscoveredStyles(discoveredStylesPath(cfg))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load discovered styles: %v\n", err)
+		return 1
+	}
+	if len(discovered) > 0 {
+		fmt.Println("\nDiscovered styles (added by Vertex AI during 'add' runs):")
+		for i, ds := range discovered {
+			fmt.Printf("  %2d. %s (%s) — discovered for %q on %s\n",
+				i+1, ds.Label, ds.Kind, ds.DiscoveredFor, ds.DiscoveredAt.Format("2006-01-02"))
+		}
 	}
 	return 0
 }
@@ -273,12 +298,33 @@ func writeQueue(path string, items []queueItem) error {
 	return os.Rename(tmp, path)
 }
 
+// appendQueue adds newItems behind whatever's already queued, skipping any
+// item that exactly duplicates an existing pending (subject, style) pair.
+// This is a backstop against the TOCTOU race between two concurrent `add`
+// invocations that both read the queue as empty for a subject before either
+// has written -- runPromptOVerseAdd's own exclude-set check narrows this
+// window but can't close it alone without file locking (founder: "the queue
+// needs to be cleared out we have some duplicates queued that are not
+// getting deduped").
 func appendQueue(path string, newItems []queueItem) error {
 	existing, err := loadQueue(path)
 	if err != nil {
 		return err
 	}
-	return writeQueue(path, append(existing, newItems...))
+	have := make(map[string]bool, len(existing))
+	for _, it := range existing {
+		have[it.Subject+"\x00"+it.StyleLabel] = true
+	}
+	deduped := make([]queueItem, 0, len(newItems))
+	for _, it := range newItems {
+		key := it.Subject + "\x00" + it.StyleLabel
+		if have[key] {
+			continue
+		}
+		have[key] = true
+		deduped = append(deduped, it)
+	}
+	return writeQueue(path, append(existing, deduped...))
 }
 
 func runPromptOVerseQueueList() int {
@@ -303,18 +349,21 @@ func runPromptOVerseQueueList() int {
 	return 0
 }
 
-// selectStylesForSubject picks up to `count` styles from the registry to
-// apply to a subject, skipping every Label in `exclude` (styles already
-// published OR already queued for this exact subject -- founder: "we
-// should not prompt for the tobacco card with that exact same prompt if we
-// already have one"), and ordering the remainder by ascending global usage
-// count so a run prefers styles under-used across the WHOLE gallery instead
-// of always the first entries in the registry (founder: "it is favoring the
-// tobacco card and the claymation every time ensure we have more variety").
-// Ties (equal usage) keep registry order, via SliceStable.
-func selectStylesForSubject(count int, exclude map[string]bool, globalUsage map[string]int) []style {
-	candidates := make([]style, 0, len(promptoverseStyles))
-	for _, st := range promptoverseStyles {
+// selectStylesForSubject picks up to `count` styles from pool to apply to a
+// subject, skipping every Label in `exclude` (styles already published OR
+// already queued for this exact subject -- founder: "we should not prompt
+// for the tobacco card with that exact same prompt if we already have
+// one"), and ordering the remainder by ascending global usage count so a
+// run prefers styles under-used across the WHOLE gallery instead of always
+// the first entries in the registry (founder: "it is favoring the tobacco
+// card and the claymation every time ensure we have more variety"). Ties
+// (equal usage) keep pool order, via SliceStable. pool is normally
+// combinedStylePool's output (hardcoded registry + discovered styles), not
+// promptoverseStyles directly -- "always add to the graph first" means the
+// graph already includes anything discovered on a prior run.
+func selectStylesForSubject(pool []style, count int, exclude map[string]bool, globalUsage map[string]int) []style {
+	candidates := make([]style, 0, len(pool))
+	for _, st := range pool {
 		if !exclude[st.Label] {
 			candidates = append(candidates, st)
 		}
@@ -352,12 +401,22 @@ func runPromptOVerseAdd(args []string) int {
 		return 1
 	}
 
+	discoveredPath := discoveredStylesPath(cfg)
+	discovered, err := loadDiscoveredStyles(discoveredPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load discovered styles: %v\n", err)
+		return 1
+	}
+	pool := combinedStylePool(discovered)
+
 	exclude := map[string]bool{}
 	globalUsage := map[string]int{}
+	subjectHasPriorGeneration := false
 	for _, n := range existing {
 		globalUsage[n.Label]++
 		if n.Subject == subject {
 			exclude[n.Label] = true
+			subjectHasPriorGeneration = true
 		}
 	}
 
@@ -370,10 +429,46 @@ func runPromptOVerseAdd(args []string) int {
 	for _, it := range pending {
 		if it.Subject == subject {
 			exclude[it.StyleLabel] = true
+			subjectHasPriorGeneration = true
 		}
 	}
 
-	selected := selectStylesForSubject(count, exclude, globalUsage)
+	selected := selectStylesForSubject(pool, count, exclude, globalUsage)
+
+	// Style discovery: only on the 2nd+ generation for a subject (a brand
+	// new subject uses the existing registry only, same as the original
+	// baseball-card batch did -- founder: "always add to the graph first
+	// then expand it"), and only ONE attempt per add call, not one per
+	// missing slot -- expansion is optional, not a quota to fill (founder:
+	// "we should not add frivolous styles so the second gen will not
+	// necessarily always expand the graph if it doesn't make sense to do
+	// so"). The model itself can decline; that's the expected common case.
+	if len(selected) < count && subjectHasPriorGeneration {
+		token, tokErr := gcloudAccessToken()
+		if tokErr != nil {
+			fmt.Fprintf(os.Stderr, "style discovery skipped (gcloud auth: %v)\n", tokErr)
+		} else {
+			labels := make([]string, 0, len(pool))
+			for _, st := range pool {
+				labels = append(labels, st.Label)
+			}
+			proposed, discErr := maybeDiscoverStyle(token, subject, labels)
+			switch {
+			case discErr != nil:
+				fmt.Fprintf(os.Stderr, "style discovery attempt failed (continuing without it): %v\n", discErr)
+			case proposed == nil:
+				fmt.Println("style discovery: no new style was worth adding this time")
+			default:
+				if err := appendDiscoveredStyle(discoveredPath, *proposed); err != nil {
+					fmt.Fprintf(os.Stderr, "failed to persist discovered style %q: %v\n", proposed.Label, err)
+				} else if st, ok := styleFromDiscovered(*proposed); ok {
+					fmt.Printf("discovered a new style and added it to the registry: %q\n", proposed.Label)
+					selected = append(selected, st)
+				}
+			}
+		}
+	}
+
 	if len(selected) == 0 {
 		fmt.Printf("already have (published or queued) every reusable style for %q — nothing new to queue\n", subject)
 		return 0
@@ -424,6 +519,13 @@ func drainQueue(cfg *config.Config) int {
 		return 0
 	}
 
+	discovered, err := loadDiscoveredStyles(discoveredStylesPath(cfg))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load discovered styles: %v\n", err)
+		return 1
+	}
+	pool := combinedStylePool(discovered)
+
 	client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
 	if cfg.IDUNAAgentSecret == "" {
 		fmt.Fprintln(os.Stderr, "error: IDUNA_AGENT_SECRET not set and not found in secrets file (need EMILY-PRIME's, which has promptoverse.write)")
@@ -435,10 +537,10 @@ func drainQueue(cfg *config.Config) int {
 		return 2
 	}
 
-	ok := 0
+	ok, skipped := 0, 0
 	for len(items) > 0 {
 		it := items[0]
-		st, found := styleByLabel(it.StyleLabel)
+		st, found := styleByLabelInPool(pool, it.StyleLabel)
 		if !found {
 			// Style no longer in the registry -- drop it rather than loop
 			// on it forever, but say so.
@@ -470,6 +572,21 @@ func drainQueue(cfg *config.Config) int {
 		}
 		url, err := client.PostPromptOVerseNode(node)
 		if err != nil {
+			if errors.Is(err, iduna.ErrPromptOVerseNodeExists) {
+				// A stale/duplicate entry (e.g. queued before the dedup fix
+				// existed, or a pre-fix race) -- drop it and keep going
+				// rather than jamming every request behind it forever
+				// (founder: "the queue needs to be cleared out we have some
+				// duplicates queued that are not getting deduped so new
+				// inputs always fail").
+				fmt.Fprintf(os.Stderr, "  SKIPPED (already published): %s\n", slug)
+				skipped++
+				items = items[1:]
+				if err := writeQueue(path, items); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: failed to persist queue after skip: %v\n", err)
+				}
+				continue
+			}
 			fmt.Fprintf(os.Stderr, "  publish FAILED for %s: %v\n", slug, err)
 			fmt.Fprintf(os.Stderr, "stopping drain -- %d item(s) still queued (image generated but not yet published, will retry the full item)\n", len(items))
 			return 1
@@ -486,7 +603,7 @@ func drainQueue(cfg *config.Config) int {
 		}
 	}
 
-	fmt.Printf("\n%d published, queue empty.\n", ok)
+	fmt.Printf("\n%d published, %d skipped (already existed), queue empty.\n", ok, skipped)
 	return 0
 }
 

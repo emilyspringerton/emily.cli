@@ -177,7 +177,17 @@ this box and `IDUNA_AGENT_SECRET` for an agent with `promptoverse.write`.
 subject, and picks from what's left by ascending global usage (least-used styles across the whole
 gallery first), so repeated runs don't just keep re-rolling whichever style sits first in the
 registry. If every registry style is already used for a subject, it reports that and queues
-nothing.
+nothing. Duplicate/stale queue entries (e.g. from a race between two concurrent `add` calls, or
+left over from before this dedup existed) no longer jam the drain permanently — a "node already
+exists" response from IDUNA is skipped, not treated as a fatal failure.
+
+On the 2nd+ generation for a subject (never the first — a brand-new subject only uses the existing
+registry), if the registry ran short, `add` makes one attempt to discover a genuinely new style via
+Vertex AI's Gemini text model, using this box's existing `gcloud` ADC (no separate credential).
+The model can decline if nothing non-frivolous comes to mind — that's the common, expected outcome,
+not padding for padding's sake. Anything it does propose is persisted to
+`EMILY/var/promptoverse-discovered-styles.json` and becomes part of the registry for every future
+subject, not just the one that triggered it.
 
 ### Context / Northstar — golden-doc tooling
 

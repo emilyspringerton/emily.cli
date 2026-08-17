@@ -7,6 +7,7 @@ package iduna
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -333,6 +334,12 @@ type PromptOVerseNode struct {
 	Tags           map[string]string `json:"tags,omitempty"`
 }
 
+// ErrPromptOVerseNodeExists means the slug (subject+style combination)
+// already exists -- a real, expected outcome for a stale/duplicate queue
+// entry, not a genuine failure. Callers (drainQueue) should skip and
+// continue on this specific error rather than stopping the whole drain.
+var ErrPromptOVerseNodeExists = errors.New("promptoverse: node already exists")
+
 // PostPromptOVerseNode publishes one node to the Prompt-o-verse gallery.
 // Requires promptoverse.write (EMILY-PRIME has it as of 2026-08-17).
 func (c *Client) PostPromptOVerseNode(n PromptOVerseNode) (url string, err error) {
@@ -351,6 +358,9 @@ func (c *Client) PostPromptOVerseNode(n PromptOVerseNode) (url string, err error
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode == http.StatusConflict {
+		return "", ErrPromptOVerseNodeExists
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return "", fmt.Errorf("post promptoverse node %d: %s", resp.StatusCode, trimMsg(raw))
 	}

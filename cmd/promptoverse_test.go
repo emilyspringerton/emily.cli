@@ -111,7 +111,7 @@ func TestQueue_WriteQueueThenLoad_EmptyMeansNoFile(t *testing.T) {
 
 func TestSelectStylesForSubject_SkipsExcluded(t *testing.T) {
 	exclude := map[string]bool{"1910s tobacco card": true, "claymation": true}
-	selected := selectStylesForSubject(len(promptoverseStyles), exclude, map[string]int{})
+	selected := selectStylesForSubject(promptoverseStyles, len(promptoverseStyles), exclude, map[string]int{})
 	for _, st := range selected {
 		if exclude[st.Label] {
 			t.Errorf("expected %q to be excluded (already published/queued for this subject), but it was selected", st.Label)
@@ -138,7 +138,7 @@ func TestSelectStylesForSubject_PrefersLeastGloballyUsed(t *testing.T) {
 			exclude[st.Label] = true
 		}
 	}
-	selected := selectStylesForSubject(1, exclude, globalUsage)
+	selected := selectStylesForSubject(promptoverseStyles, 1, exclude, globalUsage)
 	if len(selected) != 1 || selected[0].Label != "underwater" {
 		t.Errorf("expected the single least-used style 'underwater' to be picked first, got %+v", selected)
 	}
@@ -149,7 +149,7 @@ func TestSelectStylesForSubject_ZeroAvailableReturnsEmpty(t *testing.T) {
 	for _, st := range promptoverseStyles {
 		exclude[st.Label] = true
 	}
-	selected := selectStylesForSubject(5, exclude, map[string]int{})
+	selected := selectStylesForSubject(promptoverseStyles, 5, exclude, map[string]int{})
 	if len(selected) != 0 {
 		t.Errorf("expected no styles left to select when every style is excluded, got %+v", selected)
 	}
@@ -181,5 +181,44 @@ func TestQueue_WriteQueueOverwritesCompletely(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Subject != "b" {
 		t.Errorf("expected only the remaining item 'b', got %+v", items)
+	}
+}
+
+func TestAppendQueue_SkipsExactDuplicates(t *testing.T) {
+	// Regression for the founder-reported jam: "the queue needs to be
+	// cleared out we have some duplicates queued that are not getting
+	// deduped so new inputs always fail." A second append for the exact
+	// same (subject, style) pair must not add a second copy.
+	path := filepath.Join(t.TempDir(), "queue.jsonl")
+	first := []queueItem{{Subject: "ghost playing the piano", StyleLabel: "claymation"}}
+	if err := appendQueue(path, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendQueue(path, first); err != nil {
+		t.Fatal(err)
+	}
+	items, err := loadQueue(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected the duplicate append to be skipped, got %d items: %+v", len(items), items)
+	}
+}
+
+func TestAppendQueue_DifferentStyleSameSubjectBothKept(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "queue.jsonl")
+	if err := appendQueue(path, []queueItem{
+		{Subject: "ducks", StyleLabel: "claymation"},
+		{Subject: "ducks", StyleLabel: "LEGO minifigure"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := loadQueue(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Errorf("expected both distinct styles for the same subject to be kept, got %d: %+v", len(items), items)
 	}
 }
