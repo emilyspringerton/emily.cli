@@ -215,6 +215,8 @@ func RunPromptOVerse(args []string) int {
 		return runPromptOVerseQueueList()
 	case "styles":
 		return runPromptOVerseStyles()
+	case "brainstorm":
+		return runPromptOVerseBrainstorm(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "emily promptoverse: unknown subcommand %q\n\n", args[0])
 		return promptoverseUsage()
@@ -229,6 +231,8 @@ Subcommands:
   emily promptoverse work [--force]                    Drain whatever's already queued (e.g. resume after a 429)
   emily promptoverse queue                             List pending queue entries, oldest first
   emily promptoverse styles                            List the reusable style registry
+  emily promptoverse brainstorm [--seed "a, b, c"]      Prompt GPT-2 to extend the style list, parse out candidate tags
+                                [--max-tokens N] [--temperature F] [--via server|proxy|emily]
 
 Example:
   emily promptoverse add ducks 6
