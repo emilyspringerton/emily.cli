@@ -1,4 +1,5 @@
 ## 2026-08-17
+- feat(promptoverse): added Whiteboard, Paper-craft, Anime, Kawaii to the reusable style registry (14 -> 18 total) (sess-20260813-2154-dda37e8b)
 - feat(promptoverse): inter-request delay now grows +15s per successful request already made this run (capped +2m) on top of the 20s base, since API overload was still hitting around the 3rd-4th generation with a flat delay; cross-invocation backoff extra now applies to every gap in a run, not just the first request (sess-20260813-2154-dda37e8b)
 - feat(promptoverse): adaptive backoff persisted to EMILY/var/promptoverse-backoff.json -- drainQueue checks consecutive-failure history BEFORE its first request of a new run (not just between retries), waiting longer the more times in a row it's recently failed on API overload; --force skips the preemptive wait without disabling the bookkeeping (sess-20260813-2154-dda37e8b)
 - tune(promptoverse): bumped default inter-request delay 6s -> 20s (still hitting 429s at 6s), overridable via PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS so future tuning doesn't need a code change (sess-20260813-2154-dda37e8b)
