@@ -1,4 +1,5 @@
 ## 2026-08-17
+- feat(promptoverse): durable FIFO queue for gen requests -- emily promptoverse add/work now enqueue to EMILY/var/promptoverse-queue.jsonl and drain strictly front-to-back instead of firing Vertex AI calls immediately per invocation, addressing repeated 429s plausibly worsened by unordered concurrent add invocations. Stops (not retries) on failure, preserving remaining queue order; rewrites queue file after every success for crash-safety. emily promptoverse queue lists pending items. (sess-20260813-2154-dda37e8b)
 
 - Added `emily promptoverse add <subject> <count>` + `emily promptoverse styles` — formalizes the
   ad-hoc Python generation scripts written by hand while building Prompt-o-verse VS0 into real CLI
