@@ -1,9 +1,17 @@
-// cmd/promptoverse.go — emily promptoverse add <subject> <count>
+// cmd/promptoverse.go — emily promptoverse add/work/queue/styles
 //
-// Generates real images for a new Subject (e.g. "ducks") across N existing
+// Generates real images for a Subject (e.g. "ducks") across N existing
 // reusable Styles (e.g. "stained glass", "LEGO minifigure"), via Vertex AI's
 // gemini-2.5-flash-image ("Nano Banana"), and publishes each as a new leaf
 // node to the live Prompt-o-verse gallery (IDUNA's promptoverse.write API).
+//
+// Requests are queued to a durable FIFO file, not fired immediately --
+// founder direction ("run gen requests fifo so duck is after the previous
+// request"), after repeated Vertex AI 429s this session that were plausibly
+// made worse by separate `add` invocations firing close together with no
+// shared ordering or pacing. `add` enqueues then drains; `work` just drains
+// whatever's already queued (e.g. to resume after a rate-limit stop without
+// enqueueing anything new).
 //
 // Formalizes the ad-hoc Python generation scripts written by hand during
 // VS0's first build (2026-08-17) into real, reusable emily.cli
@@ -18,6 +26,7 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -26,6 +35,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +53,9 @@ const (
 	promptoverseVertexProject = "project-d24a71e9-2daf-4b2d-917"
 	promptoverseVertexRegion  = "us-central1"
 	promptoverseVertexModel   = "gemini-2.5-flash-image"
+
+	promptoverseInterRequestDelay = 6 * time.Second // spacing between successful Vertex AI calls
+	promptoverseQueueFileName     = "promptoverse-queue.jsonl"
 )
 
 // style is one entry in the reusable style registry -- the "subcategory"
@@ -102,6 +115,15 @@ var promptoverseStyles = []style{
 	}},
 }
 
+func styleByLabel(label string) (style, bool) {
+	for _, st := range promptoverseStyles {
+		if st.Label == label {
+			return st, true
+		}
+	}
+	return style{}, false
+}
+
 func RunPromptOVerse(args []string) int {
 	if len(args) == 0 {
 		return promptoverseUsage()
@@ -109,6 +131,10 @@ func RunPromptOVerse(args []string) int {
 	switch args[0] {
 	case "add":
 		return runPromptOVerseAdd(args[1:])
+	case "work":
+		return runPromptOVerseWork()
+	case "queue":
+		return runPromptOVerseQueueList()
 	case "styles":
 		return runPromptOVerseStyles()
 	default:
@@ -121,11 +147,18 @@ func promptoverseUsage() int {
 	fmt.Print(`emily promptoverse — generate + publish Prompt-o-verse gallery nodes
 
 Subcommands:
-  emily promptoverse add <subject> <count>   Generate <count> existing styles applied to <subject>
+  emily promptoverse add <subject> <count>   Queue <count> styles applied to <subject>, then drain
+  emily promptoverse work                    Drain whatever's already queued (e.g. resume after a 429)
+  emily promptoverse queue                   List pending queue entries, oldest first
   emily promptoverse styles                  List the reusable style registry
 
 Example:
   emily promptoverse add ducks 6
+
+Requests are queued FIFO to a durable file, not fired immediately -- if
+another 'add' is already mid-flight or queued, new requests wait their turn
+in arrival order. Draining stops (not retries) on a rate limit, leaving the
+remainder queued for 'emily promptoverse work' later.
 
 Requires: gcloud ADC already authenticated (this box's existing setup),
 IDUNA_AGENT_SECRET for EMILY-PRIME (promptoverse.write), iduna.service running.
@@ -137,6 +170,108 @@ func runPromptOVerseStyles() int {
 	fmt.Println("Reusable style registry:")
 	for i, st := range promptoverseStyles {
 		fmt.Printf("  %2d. %s (%s)\n", i+1, st.Label, st.Kind)
+	}
+	return 0
+}
+
+// queueItem is one pending generation request, persisted as a JSONL line.
+type queueItem struct {
+	Subject    string    `json:"subject"`
+	StyleLabel string    `json:"style_label"`
+	EnqueuedAt time.Time `json:"enqueued_at"`
+}
+
+func queuePath(cfg *config.Config) string {
+	root := cfg.EmilyRoot
+	if root == "" {
+		root = "/home/fatbaby/EMILY"
+	}
+	return filepath.Join(root, "var", promptoverseQueueFileName)
+}
+
+func loadQueue(path string) ([]queueItem, error) {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var items []queueItem
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var it queueItem
+		if err := json.Unmarshal(line, &it); err != nil {
+			continue // skip a corrupt line rather than fail the whole queue
+		}
+		items = append(items, it)
+	}
+	return items, sc.Err()
+}
+
+// writeQueue overwrites the queue file with exactly items, in order --
+// oldest (front of the FIFO) first. Used after every successful drain step
+// so a crash mid-run loses at most the one in-flight item, not the whole
+// remaining queue.
+func writeQueue(path string, items []queueItem) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		b, err := json.Marshal(it)
+		if err != nil {
+			f.Close()
+			return err
+		}
+		if _, err := f.Write(append(b, '\n')); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func appendQueue(path string, newItems []queueItem) error {
+	existing, err := loadQueue(path)
+	if err != nil {
+		return err
+	}
+	return writeQueue(path, append(existing, newItems...))
+}
+
+func runPromptOVerseQueueList() int {
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+	items, err := loadQueue(queuePath(cfg))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read queue: %v\n", err)
+		return 1
+	}
+	if len(items) == 0 {
+		fmt.Println("queue is empty")
+		return 0
+	}
+	fmt.Printf("%d pending, oldest first:\n", len(items))
+	for i, it := range items {
+		fmt.Printf("  %2d. %s x %s (queued %s)\n", i+1, it.StyleLabel, it.Subject, it.EnqueuedAt.Format(time.RFC3339))
 	}
 	return 0
 }
@@ -153,7 +288,7 @@ func runPromptOVerseAdd(args []string) int {
 		return 1
 	}
 	if count > len(promptoverseStyles) {
-		fmt.Printf("only %d styles in the registry — generating all of them (run 'emily promptoverse styles' to see the list)\n", len(promptoverseStyles))
+		fmt.Printf("only %d styles in the registry — queuing all of them (run 'emily promptoverse styles' to see the list)\n", len(promptoverseStyles))
 		count = len(promptoverseStyles)
 	}
 
@@ -162,67 +297,112 @@ func runPromptOVerseAdd(args []string) int {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
 	}
+
+	now := time.Now().UTC()
+	newItems := make([]queueItem, 0, count)
+	for _, st := range promptoverseStyles[:count] {
+		newItems = append(newItems, queueItem{Subject: subject, StyleLabel: st.Label, EnqueuedAt: now})
+	}
+	path := queuePath(cfg)
+	if err := appendQueue(path, newItems); err != nil {
+		fmt.Fprintf(os.Stderr, "enqueue: %v\n", err)
+		return 1
+	}
+	fmt.Printf("queued %d requests for %q (FIFO — behind anything already pending)\n", count, subject)
+
+	return drainQueue(cfg)
+}
+
+func runPromptOVerseWork() int {
+	cfg, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		return 1
+	}
+	return drainQueue(cfg)
+}
+
+// drainQueue processes the queue strictly front-to-back (FIFO). On a real
+// failure (rate limit or anything else) it stops immediately rather than
+// skipping ahead -- an item is only ever removed from the queue after it
+// actually succeeds, so nothing is silently dropped. The queue file is
+// rewritten after every successful item, not just at the end, so a crash
+// mid-drain loses at most the one in-flight request.
+func drainQueue(cfg *config.Config) int {
+	path := queuePath(cfg)
+	items, err := loadQueue(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read queue: %v\n", err)
+		return 1
+	}
+	if len(items) == 0 {
+		fmt.Println("queue is empty, nothing to do")
+		return 0
+	}
+
 	client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
 	if cfg.IDUNAAgentSecret == "" {
 		fmt.Fprintln(os.Stderr, "error: IDUNA_AGENT_SECRET not set and not found in secrets file (need EMILY-PRIME's, which has promptoverse.write)")
 		return 2
 	}
-
 	token, err := gcloudAccessToken()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gcloud auth: %v (is gcloud authenticated on this box?)\n", err)
 		return 2
 	}
 
-	subjectSlug := slugifyPO(subject)
-	ok, failed := 0, 0
-	for i, st := range promptoverseStyles[:count] {
-		fmt.Fprintf(os.Stderr, "generating %s x %s...\n", st.Label, subject)
-		prompt := st.Prompt(subject)
+	ok := 0
+	for len(items) > 0 {
+		it := items[0]
+		st, found := styleByLabel(it.StyleLabel)
+		if !found {
+			// Style no longer in the registry -- drop it rather than loop
+			// on it forever, but say so.
+			fmt.Fprintf(os.Stderr, "dropping queued item for unknown style %q (subject %q)\n", it.StyleLabel, it.Subject)
+			items = items[1:]
+			_ = writeQueue(path, items)
+			continue
+		}
+
+		fmt.Fprintf(os.Stderr, "generating %s x %s...\n", st.Label, it.Subject)
+		prompt := st.Prompt(it.Subject)
 		img, err := vertexGenerateImage(token, prompt)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  FAILED: %v\n", err)
-			failed++
-			if strings.Contains(err.Error(), "429") {
-				// Re-mint in case the failure was auth-adjacent; the real
-				// fix for 429 is time, not a new token, but this is cheap.
-				if t2, err2 := gcloudAccessToken(); err2 == nil {
-					token = t2
-				}
-			}
-			time.Sleep(5 * time.Second)
-			continue
+			fmt.Fprintf(os.Stderr, "stopping drain -- %d item(s) still queued, left in place for 'emily promptoverse work' later\n", len(items))
+			return 1
 		}
 
-		slug := fmt.Sprintf("%s-%s", subjectSlug, slugifyPO(st.Label))
+		slug := fmt.Sprintf("%s-%s", slugifyPO(it.Subject), slugifyPO(st.Label))
 		node := iduna.PromptOVerseNode{
 			Slug:           slug,
 			Label:          st.Label,
-			Subject:        subject,
+			Subject:        it.Subject,
 			Kind:           st.Kind,
-			EZPrompt:       fmt.Sprintf("%s %s", st.Label, subject),
+			EZPrompt:       fmt.Sprintf("%s %s", st.Label, it.Subject),
 			ExpandedPrompt: prompt,
 			ImageBase64:    base64.StdEncoding.EncodeToString(img),
-			Tags:           map[string]string{"style": st.Label, "subject": subject},
+			Tags:           map[string]string{"style": st.Label, "subject": it.Subject},
 		}
 		url, err := client.PostPromptOVerseNode(node)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  publish failed for %s: %v\n", slug, err)
-			failed++
-			time.Sleep(2 * time.Second)
-			continue
+			fmt.Fprintf(os.Stderr, "  publish FAILED for %s: %v\n", slug, err)
+			fmt.Fprintf(os.Stderr, "stopping drain -- %d item(s) still queued (image generated but not yet published, will retry the full item)\n", len(items))
+			return 1
 		}
 		fmt.Printf("  OK -> %s\n", url)
 		ok++
-		if i < count-1 {
-			time.Sleep(5 * time.Second) // mind the rate limits
+
+		items = items[1:]
+		if err := writeQueue(path, items); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to persist queue after success: %v\n", err)
+		}
+		if len(items) > 0 {
+			time.Sleep(promptoverseInterRequestDelay)
 		}
 	}
 
-	fmt.Printf("\n%d/%d succeeded, %d failed.\n", ok, ok+failed, failed)
-	if failed > 0 {
-		return 1
-	}
+	fmt.Printf("\n%d published, queue empty.\n", ok)
 	return 0
 }
 
@@ -251,7 +431,7 @@ func vertexGenerateImage(token, prompt string) ([]byte, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	httpClient := &http.Client{Timeout: 60 * time.Second}
+	httpClient := &http.Client{Timeout: 90 * time.Second}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
