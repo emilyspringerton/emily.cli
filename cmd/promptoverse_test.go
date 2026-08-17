@@ -243,3 +243,37 @@ func TestPromptoverseInterRequestDelay_DefaultAndOverride(t *testing.T) {
 		}
 	}
 }
+
+func TestPromptoverseEffectiveDelay_GrowsWithSuccessesThisRun(t *testing.T) {
+	t.Setenv("PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS", "")
+	// Regression for the founder's exact report: "we are still getting
+	// apilimited in like our 3rd or 4th gen usually" -- the gap before the
+	// 4th request must be meaningfully larger than the gap before the 2nd.
+	d0 := promptoverseEffectiveDelay(0, 0)
+	d1 := promptoverseEffectiveDelay(1, 0)
+	d3 := promptoverseEffectiveDelay(3, 0)
+	if !(d0 < d1 && d1 < d3) {
+		t.Errorf("expected strictly increasing delay across a run, got d0=%v d1=%v d3=%v", d0, d1, d3)
+	}
+	if d0 != promptoverseDefaultInterRequestDelay {
+		t.Errorf("expected the first gap (0 prior successes) to equal the base delay, got %v", d0)
+	}
+}
+
+func TestPromptoverseEffectiveDelay_GrowthCaps(t *testing.T) {
+	t.Setenv("PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS", "")
+	got := promptoverseEffectiveDelay(1000, 0)
+	want := promptoverseDefaultInterRequestDelay + promptoverseInterRequestGrowthCap
+	if got != want {
+		t.Errorf("expected growth to cap at %v total, got %v", want, got)
+	}
+}
+
+func TestPromptoverseEffectiveDelay_AddsBackoffExtraOnTop(t *testing.T) {
+	t.Setenv("PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS", "")
+	got := promptoverseEffectiveDelay(0, 45*time.Second)
+	want := promptoverseDefaultInterRequestDelay + 45*time.Second
+	if got != want {
+		t.Errorf("expected the backoff extra to add on top of the base delay, got %v want %v", got, want)
+	}
+}

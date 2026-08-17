@@ -65,8 +65,22 @@ const (
 	// "still not long enough" / "too conservative now" doesn't need a code
 	// change to tune.
 	promptoverseDefaultInterRequestDelay = 20 * time.Second
-	promptoverseQueueFileName            = "promptoverse-queue.jsonl"
-	promptoverseDiscoveredFileName       = "promptoverse-discovered-styles.json"
+
+	// promptoverseInterRequestGrowth: each successful request already made
+	// THIS run adds this much extra spacing before the next one, on top of
+	// the base delay above, capped at promptoverseInterRequestGrowthCap.
+	// Founder, real-time: "we are still getting apilimited in like our 3rd
+	// or 4th gen usually" -- a flat delay wasn't enough once a run had made
+	// a few requests in a short window, which looks like Vertex AI's actual
+	// limit here behaves more like "requests per minute" than "seconds
+	// since the last one." Growing the gap as a run progresses (20s, 35s,
+	// 50s, 65s, ...) targets that directly instead of just raising the flat
+	// floor again.
+	promptoverseInterRequestGrowth    = 15 * time.Second
+	promptoverseInterRequestGrowthCap = 2 * time.Minute
+
+	promptoverseQueueFileName      = "promptoverse-queue.jsonl"
+	promptoverseDiscoveredFileName = "promptoverse-discovered-styles.json"
 )
 
 // style is one entry in the reusable style registry -- the "subcategory"
@@ -201,11 +215,16 @@ another 'add' is already mid-flight or queued, new requests wait their turn
 in arrival order. Draining stops (not retries) on a rate limit, leaving the
 remainder queued for 'emily promptoverse work' later. 20s between successful
 requests by default -- override with PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS.
+That gap also grows +15s per successful request already made THIS run
+(capped at +2m), since the API's real limit behaves more like requests/min
+than seconds-since-last-request -- the flat delay alone wasn't enough by
+the 3rd or 4th generation in a run.
 
 Adaptive backoff: if recent runs hit API overload, the NEXT run waits a
 little longer before its very first request too (not just between retries),
-scaling with how many times in a row it's recently failed. --force skips
-that preemptive wait for one run (bookkeeping still happens).
+scaling with how many times in a row it's recently failed -- and that same
+extra wait is added to every gap for the rest of that run, not just the
+first one. --force skips all of that for one run (bookkeeping still happens).
 
 Requires: gcloud ADC already authenticated (this box's existing setup),
 IDUNA_AGENT_SECRET for EMILY-PRIME (promptoverse.write), iduna.service running.
@@ -544,6 +563,11 @@ func runPromptOVerseWork(args []string) int {
 // between retries within one run -- three separate invocations in a row
 // that each hit a 429 make the third one preemptively cautious. force
 // skips that wait for this one run without disabling the bookkeeping.
+//
+// The gap between successive requests within a single run also grows as
+// the run goes on (promptoverseEffectiveDelay) -- founder, real-time: "we
+// are still getting apilimited in like our 3rd or 4th gen usually," so a
+// flat per-request delay wasn't enough on its own.
 func drainQueue(cfg *config.Config, force bool) int {
 	path := queuePath(cfg)
 	items, err := loadQueue(path)
@@ -557,16 +581,18 @@ func drainQueue(cfg *config.Config, force bool) int {
 	}
 
 	backoffPath := backoffStatePath(cfg)
+	var backoffExtra time.Duration
 	if !force {
 		st, err := loadBackoffState(backoffPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "load backoff state: %v\n", err)
 			return 1
 		}
-		if wait := backoffWaitFor(st, time.Now().UTC()); wait > 0 {
+		backoffExtra = backoffWaitFor(st, time.Now().UTC())
+		if backoffExtra > 0 {
 			fmt.Fprintf(os.Stderr, "%d recent consecutive failure(s) -- waiting an extra %s before the first request (use --force to skip)\n",
-				st.ConsecutiveFailures, wait)
-			time.Sleep(wait)
+				st.ConsecutiveFailures, backoffExtra)
+			time.Sleep(backoffExtra)
 		}
 	}
 
@@ -652,7 +678,9 @@ func drainQueue(cfg *config.Config, force bool) int {
 			fmt.Fprintf(os.Stderr, "warning: failed to persist queue after success: %v\n", err)
 		}
 		if len(items) > 0 {
-			time.Sleep(promptoverseInterRequestDelay())
+			delay := promptoverseEffectiveDelay(ok, backoffExtra)
+			fmt.Fprintf(os.Stderr, "  waiting %s before the next request...\n", delay)
+			time.Sleep(delay)
 		}
 	}
 
@@ -669,6 +697,21 @@ func promptoverseInterRequestDelay() time.Duration {
 		}
 	}
 	return promptoverseDefaultInterRequestDelay
+}
+
+// promptoverseEffectiveDelay is the actual spacing before the NEXT request
+// in a run: the configurable base, plus promptoverseInterRequestGrowth for
+// every successful request already made this run (capped), plus any
+// cross-invocation backoff extra (0 when --force skipped it). successesSoFar
+// resets to 0 every new invocation -- deliberately not persisted the way
+// the cross-run backoff state is, since it's tracking "how far into THIS
+// burst am I," a different question than "how many recent runs failed."
+func promptoverseEffectiveDelay(successesSoFar int, backoffExtra time.Duration) time.Duration {
+	growth := time.Duration(successesSoFar) * promptoverseInterRequestGrowth
+	if growth > promptoverseInterRequestGrowthCap {
+		growth = promptoverseInterRequestGrowthCap
+	}
+	return promptoverseInterRequestDelay() + growth + backoffExtra
 }
 
 func gcloudAccessToken() (string, error) {

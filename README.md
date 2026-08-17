@@ -171,8 +171,11 @@ Requests are queued FIFO to a durable file (`EMILY/var/promptoverse-queue.jsonl`
 immediately — `add` enqueues then drains; if a drain is already mid-flight or queued, new
 requests wait their turn in arrival order. Draining stops (not retries) on a rate limit, leaving
 the remainder queued for `emily promptoverse work` later. 20s between successful requests by
-default — override with `PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS`. Requires `gcloud` ADC
-authenticated on this box and `IDUNA_AGENT_SECRET` for an agent with `promptoverse.write`.
+default — override with `PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS`. That gap also grows +15s per
+successful request already made *this run* (capped at +2m) — the API's real limit behaves more
+like requests/minute than seconds-since-last-request, so a flat delay alone wasn't holding up past
+the 3rd or 4th generation in a run. Requires `gcloud` ADC authenticated on this box and
+`IDUNA_AGENT_SECRET` for an agent with `promptoverse.write`.
 
 `add` deduplicates: it skips any style already published *or* already queued for that exact
 subject, and picks from what's left by ascending global usage (least-used styles across the whole
@@ -195,7 +198,8 @@ Adaptive backoff: consecutive API-overload failures are tracked in
 request, not just between retries mid-drain — three separate invocations in a row that each hit a
 429 make the third one preemptively wait longer, scaling with the streak (capped at 5 minutes,
 linear 30s/failure). A failure older than 15 minutes doesn't count against a fresh attempt. Any
-success resets the streak. `--force` skips the preemptive wait for one run without turning off the
+success resets the streak. That same extra wait is also added to every gap for the rest of a run,
+not just the first request. `--force` skips all of that for one run without turning off the
 tracking.
 
 ### Context / Northstar — golden-doc tooling
