@@ -161,10 +161,10 @@ emily key unset NAME
 ### Prompt-o-verse — generate + publish gallery nodes
 
 ```bash
-emily promptoverse add <subject> <count>   # queue <count> styles applied to <subject>, then drain
-emily promptoverse work                    # drain whatever's already queued (resume after a 429)
-emily promptoverse queue                   # list pending queue entries, oldest first
-emily promptoverse styles                  # list the reusable style registry
+emily promptoverse add <subject> <count> [--force]   # queue <count> styles applied to <subject>, then drain
+emily promptoverse work [--force]                    # drain whatever's already queued (resume after a 429)
+emily promptoverse queue                             # list pending queue entries, oldest first
+emily promptoverse styles                            # list the reusable style registry
 ```
 
 Requests are queued FIFO to a durable file (`EMILY/var/promptoverse-queue.jsonl`), not fired
@@ -189,6 +189,14 @@ The model can decline if nothing non-frivolous comes to mind — that's the comm
 not padding for padding's sake. Anything it does propose is persisted to
 `EMILY/var/promptoverse-discovered-styles.json` and becomes part of the registry for every future
 subject, not just the one that triggered it.
+
+Adaptive backoff: consecutive API-overload failures are tracked in
+`EMILY/var/promptoverse-backoff.json`. The NEXT run consults that state *before* its first
+request, not just between retries mid-drain — three separate invocations in a row that each hit a
+429 make the third one preemptively wait longer, scaling with the streak (capped at 5 minutes,
+linear 30s/failure). A failure older than 15 minutes doesn't count against a fresh attempt. Any
+success resets the streak. `--force` skips the preemptive wait for one run without turning off the
+tracking.
 
 ### Context / Northstar — golden-doc tooling
 

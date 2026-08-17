@@ -173,7 +173,7 @@ func RunPromptOVerse(args []string) int {
 	case "add":
 		return runPromptOVerseAdd(args[1:])
 	case "work":
-		return runPromptOVerseWork()
+		return runPromptOVerseWork(args[1:])
 	case "queue":
 		return runPromptOVerseQueueList()
 	case "styles":
@@ -188,10 +188,10 @@ func promptoverseUsage() int {
 	fmt.Print(`emily promptoverse — generate + publish Prompt-o-verse gallery nodes
 
 Subcommands:
-  emily promptoverse add <subject> <count>   Queue <count> styles applied to <subject>, then drain
-  emily promptoverse work                    Drain whatever's already queued (e.g. resume after a 429)
-  emily promptoverse queue                   List pending queue entries, oldest first
-  emily promptoverse styles                  List the reusable style registry
+  emily promptoverse add <subject> <count> [--force]   Queue <count> styles applied to <subject>, then drain
+  emily promptoverse work [--force]                    Drain whatever's already queued (e.g. resume after a 429)
+  emily promptoverse queue                             List pending queue entries, oldest first
+  emily promptoverse styles                            List the reusable style registry
 
 Example:
   emily promptoverse add ducks 6
@@ -201,6 +201,11 @@ another 'add' is already mid-flight or queued, new requests wait their turn
 in arrival order. Draining stops (not retries) on a rate limit, leaving the
 remainder queued for 'emily promptoverse work' later. 20s between successful
 requests by default -- override with PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS.
+
+Adaptive backoff: if recent runs hit API overload, the NEXT run waits a
+little longer before its very first request too (not just between retries),
+scaling with how many times in a row it's recently failed. --force skips
+that preemptive wait for one run (bookkeeping still happens).
 
 Requires: gcloud ADC already authenticated (this box's existing setup),
 IDUNA_AGENT_SECRET for EMILY-PRIME (promptoverse.write), iduna.service running.
@@ -386,8 +391,19 @@ func selectStylesForSubject(pool []style, count int, exclude map[string]bool, gl
 }
 
 func runPromptOVerseAdd(args []string) int {
+	force := false
+	rest := make([]string, 0, len(args))
+	for _, a := range args {
+		if a == "--force" {
+			force = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	args = rest
+
 	if len(args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: emily promptoverse add <subject> <count>")
+		fmt.Fprintln(os.Stderr, "usage: emily promptoverse add <subject> <count> [--force]")
 		return 1
 	}
 	subject := strings.TrimSpace(args[0])
@@ -497,16 +513,22 @@ func runPromptOVerseAdd(args []string) int {
 	}
 	fmt.Printf("queued %d requests for %q (FIFO — behind anything already pending)\n", len(newItems), subject)
 
-	return drainQueue(cfg)
+	return drainQueue(cfg, force)
 }
 
-func runPromptOVerseWork() int {
+func runPromptOVerseWork(args []string) int {
+	force := false
+	for _, a := range args {
+		if a == "--force" {
+			force = true
+		}
+	}
 	cfg, err := config.Resolve()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
 	}
-	return drainQueue(cfg)
+	return drainQueue(cfg, force)
 }
 
 // drainQueue processes the queue strictly front-to-back (FIFO). On a real
@@ -515,7 +537,14 @@ func runPromptOVerseWork() int {
 // actually succeeds, so nothing is silently dropped. The queue file is
 // rewritten after every successful item, not just at the end, so a crash
 // mid-drain loses at most the one in-flight request.
-func drainQueue(cfg *config.Config) int {
+//
+// Before doing anything else it consults the persisted backoff state
+// (promptoverse_backoff.go): if recent runs hit API overload, THIS run
+// waits a little longer before its very first request too, not just
+// between retries within one run -- three separate invocations in a row
+// that each hit a 429 make the third one preemptively cautious. force
+// skips that wait for this one run without disabling the bookkeeping.
+func drainQueue(cfg *config.Config, force bool) int {
 	path := queuePath(cfg)
 	items, err := loadQueue(path)
 	if err != nil {
@@ -525,6 +554,20 @@ func drainQueue(cfg *config.Config) int {
 	if len(items) == 0 {
 		fmt.Println("queue is empty, nothing to do")
 		return 0
+	}
+
+	backoffPath := backoffStatePath(cfg)
+	if !force {
+		st, err := loadBackoffState(backoffPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "load backoff state: %v\n", err)
+			return 1
+		}
+		if wait := backoffWaitFor(st, time.Now().UTC()); wait > 0 {
+			fmt.Fprintf(os.Stderr, "%d recent consecutive failure(s) -- waiting an extra %s before the first request (use --force to skip)\n",
+				st.ConsecutiveFailures, wait)
+			time.Sleep(wait)
+		}
 	}
 
 	discovered, err := loadDiscoveredStyles(discoveredStylesPath(cfg))
@@ -564,8 +607,10 @@ func drainQueue(cfg *config.Config) int {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  FAILED: %v\n", err)
 			fmt.Fprintf(os.Stderr, "stopping drain -- %d item(s) still queued, left in place for 'emily promptoverse work' later\n", len(items))
+			recordBackoffFailure(backoffPath)
 			return 1
 		}
+		clearBackoffState(backoffPath)
 
 		slug := fmt.Sprintf("%s-%s", slugifyPO(it.Subject), slugifyPO(st.Label))
 		node := iduna.PromptOVerseNode{
