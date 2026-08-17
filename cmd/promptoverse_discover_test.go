@@ -68,6 +68,42 @@ func TestParseStyleProposalJSON_RejectsBadKind(t *testing.T) {
 	}
 }
 
+func TestParseNamedStyleTemplateJSON_ValidResponse(t *testing.T) {
+	raw := `{"kind": "surreal", "template": "%s reimagined as a gladiator, leather and bronze armor, dramatic arena lighting."}`
+	ds, err := parseNamedStyleTemplateJSON(raw, "gladiator", "princess")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ds.Label != "gladiator" {
+		t.Errorf("expected the label to be the caller-fixed name, not model output, got %q", ds.Label)
+	}
+	if ds.DiscoveredFor != "princess" {
+		t.Errorf("expected DiscoveredFor to record the triggering subject, got %q", ds.DiscoveredFor)
+	}
+}
+
+func TestParseNamedStyleTemplateJSON_StripsMarkdownFences(t *testing.T) {
+	raw := "```json\n" + `{"kind": "historical", "template": "%s depicted as a gladiator."}` + "\n```"
+	ds, err := parseNamedStyleTemplateJSON(raw, "gladiator", "princess")
+	if err != nil || ds == nil {
+		t.Fatalf("expected fenced JSON to parse, got %+v, err=%v", ds, err)
+	}
+}
+
+func TestParseNamedStyleTemplateJSON_RejectsMissingPlaceholder(t *testing.T) {
+	raw := `{"kind": "surreal", "template": "a gladiator, no placeholder here."}`
+	if _, err := parseNamedStyleTemplateJSON(raw, "gladiator", "princess"); err == nil {
+		t.Fatal("expected an error for a template missing the placeholder")
+	}
+}
+
+func TestParseNamedStyleTemplateJSON_RejectsBadKind(t *testing.T) {
+	raw := `{"kind": "whimsical", "template": "%s as a gladiator."}`
+	if _, err := parseNamedStyleTemplateJSON(raw, "gladiator", "princess"); err == nil {
+		t.Fatal("expected an error for an invalid kind")
+	}
+}
+
 func TestExtractGeminiText_ConcatenatesParts(t *testing.T) {
 	raw := []byte(`{"candidates":[{"content":{"parts":[{"text":"{\"propose\""},{"text":": false}"}]}}]}`)
 	text, err := extractGeminiText(raw)

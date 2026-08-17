@@ -227,7 +227,7 @@ func promptoverseUsage() int {
 	fmt.Print(`emily promptoverse — generate + publish Prompt-o-verse gallery nodes
 
 Subcommands:
-  emily promptoverse add <subject> <count> [--force]   Queue <count> styles applied to <subject>, then drain
+  emily promptoverse add <subject> <count> [--force] [--tag <style>]   Queue <count> styles applied to <subject>, then drain
   emily promptoverse work [--force]                    Drain whatever's already queued (e.g. resume after a 429)
   emily promptoverse queue                             List pending queue entries, oldest first
   emily promptoverse styles                            List the reusable style registry
@@ -236,6 +236,10 @@ Subcommands:
 
 Example:
   emily promptoverse add ducks 6
+  emily promptoverse add princess 4 --tag gladiator
+    Forces "gladiator" as one of the 4 (creating it via Vertex AI if it's
+    not already a known style), then fills the remaining 3 through the
+    normal deduped/variety-weighted selection.
 
 Requests are queued FIFO to a durable file, not fired immediately -- if
 another 'add' is already mid-flight or queued, new requests wait their turn
@@ -438,18 +442,30 @@ func selectStylesForSubject(pool []style, count int, exclude map[string]bool, gl
 
 func runPromptOVerseAdd(args []string) int {
 	force := false
+	tag := ""
 	rest := make([]string, 0, len(args))
-	for _, a := range args {
-		if a == "--force" {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--force":
 			force = true
-			continue
+		case a == "--tag":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "emily promptoverse add: --tag requires a value")
+				return 1
+			}
+			tag = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--tag="):
+			tag = strings.TrimPrefix(a, "--tag=")
+		default:
+			rest = append(rest, a)
 		}
-		rest = append(rest, a)
 	}
 	args = rest
 
 	if len(args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: emily promptoverse add <subject> <count> [--force]")
+		fmt.Fprintln(os.Stderr, "usage: emily promptoverse add <subject> <count> [--force] [--tag <style>]")
 		return 1
 	}
 	subject := strings.TrimSpace(args[0])
@@ -503,7 +519,51 @@ func runPromptOVerseAdd(args []string) int {
 		}
 	}
 
-	selected := selectStylesForSubject(pool, count, exclude, globalUsage)
+	// --tag forces one specific style into this batch, whether or not it's
+	// already in the registry -- founder: "princess 4 --tag gladiator
+	// forces a new or already existing style gladiator and then queues 3
+	// more princess via the deduped tag selection process already
+	// established." A tag that would duplicate what's already
+	// published/queued for this subject is NOT force-added (dedup still
+	// wins) -- it just falls through to the normal selection below.
+	selected := make([]style, 0, count)
+	if tag = strings.TrimSpace(tag); tag != "" {
+		switch {
+		case exclude[tag]:
+			fmt.Printf("%q already has style %q (published or queued) -- ignoring --tag, queuing %d via normal selection\n", subject, tag, count)
+		default:
+			forced, ok := styleByLabelInPool(pool, tag)
+			if !ok {
+				token, tokErr := gcloudAccessToken()
+				if tokErr != nil {
+					fmt.Fprintf(os.Stderr, "cannot create new style %q for --tag (gcloud auth: %v)\n", tag, tokErr)
+					return 2
+				}
+				newStyle, expErr := expandNamedStyle(token, tag, subject)
+				if expErr != nil {
+					fmt.Fprintf(os.Stderr, "failed to create new style %q for --tag: %v\n", tag, expErr)
+					return 1
+				}
+				if err := appendDiscoveredStyle(discoveredPath, *newStyle); err != nil {
+					fmt.Fprintf(os.Stderr, "failed to persist forced style %q: %v\n", tag, err)
+					return 1
+				}
+				st, ok := styleFromDiscovered(*newStyle)
+				if !ok {
+					fmt.Fprintf(os.Stderr, "model produced a malformed template for %q\n", tag)
+					return 1
+				}
+				forced = st
+				pool = append(pool, st)
+				fmt.Printf("forced a new style %q into the registry\n", tag)
+			} else {
+				fmt.Printf("forcing existing style %q\n", tag)
+			}
+			selected = append(selected, forced)
+			exclude[tag] = true
+		}
+	}
+	selected = append(selected, selectStylesForSubject(pool, count-len(selected), exclude, globalUsage)...)
 
 	// Style discovery: only on the 2nd+ generation for a subject (a brand
 	// new subject uses the existing registry only, same as the original

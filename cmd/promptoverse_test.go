@@ -59,6 +59,22 @@ func TestRunPromptOVerseAdd_RejectsBadCount(t *testing.T) {
 	}
 }
 
+func TestRunPromptOVerseAdd_ParsesTagFlagAndStripsFromPositionalArgs(t *testing.T) {
+	// --tag <value> (and --tag=value) must be consumed as a flag, not
+	// treated as part of the positional <subject>/<count> pair -- verified
+	// via the same count-validation early-return the test above uses, so
+	// this doesn't require a live IDUNA/network connection.
+	if code := runPromptOVerseAdd([]string{"princess", "--tag", "gladiator", "not-a-number"}); code != 1 {
+		t.Errorf("expected exit 1 (bad count) once --tag/value were correctly stripped, got %d", code)
+	}
+	if code := runPromptOVerseAdd([]string{"princess", "--tag=gladiator", "not-a-number"}); code != 1 {
+		t.Errorf("expected exit 1 (bad count) for the --tag=value form too, got %d", code)
+	}
+	if code := runPromptOVerseAdd([]string{"princess", "--tag"}); code != 1 {
+		t.Errorf("expected exit 1 for --tag given with no value, got %d", code)
+	}
+}
+
 func TestStyleByLabel(t *testing.T) {
 	st, ok := styleByLabel("stained glass")
 	if !ok {

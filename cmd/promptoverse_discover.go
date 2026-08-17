@@ -217,6 +217,18 @@ Respond with ONLY raw JSON (no markdown fences, no commentary), in exactly one o
 "kind" must be "historical" (resembles something that really existed/exists) or "surreal" (a whimsical/creative treatment).`,
 		strings.Join(existingLabels, ", "), subject)
 
+	text, err := vertexTextGenerate(token, prompt)
+	if err != nil {
+		return nil, err
+	}
+	return parseStyleProposalJSON(text, existingLabels, subject)
+}
+
+// vertexTextGenerate calls Vertex AI's Gemini text model and returns the
+// concatenated text of the response. Shared by maybeDiscoverStyle (model
+// proposes both name and template) and expandNamedStyle (caller fixes the
+// name, model only writes the template).
+func vertexTextGenerate(token, prompt string) (string, error) {
 	url := fmt.Sprintf(
 		"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:generateContent",
 		promptoverseVertexRegion, promptoverseVertexProject, promptoverseVertexRegion, promptoverseVertexTextModel,
@@ -228,7 +240,7 @@ Respond with ONLY raw JSON (no markdown fences, no commentary), in exactly one o
 	})
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -236,17 +248,72 @@ Respond with ONLY raw JSON (no markdown fences, no commentary), in exactly one o
 	httpClient := &http.Client{Timeout: 30 * time.Second}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("vertex ai (text) %d: %s", resp.StatusCode, trimMsgPO(raw))
+		return "", fmt.Errorf("vertex ai (text) %d: %s", resp.StatusCode, trimMsgPO(raw))
+	}
+	return extractGeminiText(raw)
+}
+
+// parseNamedStyleTemplateJSON decodes and validates the model's response to
+// expandNamedStyle's prompt -- same fenced-JSON handling and validation
+// bar as parseStyleProposalJSON, but there's no "propose"/decline path
+// (the name is fixed by the caller) and no "label" field to parse (also
+// fixed).
+func parseNamedStyleTemplateJSON(text, label, subject string) (*discoveredStyle, error) {
+	text = strings.TrimSpace(text)
+	text = strings.TrimPrefix(text, "```json")
+	text = strings.TrimPrefix(text, "```")
+	text = strings.TrimSuffix(text, "```")
+	text = strings.TrimSpace(text)
+
+	var out struct {
+		Kind     string `json:"kind"`
+		Template string `json:"template"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		return nil, fmt.Errorf("decode style template JSON: %w (raw: %s)", err, trimMsgPO([]byte(text)))
+	}
+	out.Kind = strings.TrimSpace(strings.ToLower(out.Kind))
+	if out.Kind != "historical" && out.Kind != "surreal" {
+		return nil, fmt.Errorf("model returned an invalid kind %q", out.Kind)
+	}
+	if strings.Count(out.Template, "%s") != 1 {
+		return nil, fmt.Errorf("model's template is missing the %%s placeholder: %q", out.Template)
 	}
 
-	text, err := extractGeminiText(raw)
+	return &discoveredStyle{
+		Label:         label,
+		Kind:          out.Kind,
+		Template:      out.Template,
+		DiscoveredFor: subject,
+		DiscoveredAt:  time.Now().UTC(),
+	}, nil
+}
+
+// expandNamedStyle asks Vertex AI's Gemini text model to write a real,
+// subject-agnostic template for an EXPLICITLY named style -- used by
+// `emily promptoverse add <subject> <count> --tag <label>` to force a
+// specific style whether or not it already exists (founder: "princess 4
+// --tag gladiator forces a new or already existing style gladiator").
+// Unlike maybeDiscoverStyle, there's no decline path: the caller fixed the
+// name, so the model's only job is to write a good template for it.
+func expandNamedStyle(token, label, subject string) (*discoveredStyle, error) {
+	prompt := fmt.Sprintf(`You maintain a reusable "style" registry for Prompt-o-verse, a generative art gallery. A style is a subject-agnostic visual/transformation treatment applicable to ANY subject -- e.g. "claymation", "stained glass cathedral window", "made of candy".
+
+Write a template for a new style called %q. It must generalize to any subject, not be specific to one.
+
+Respond with ONLY raw JSON (no markdown fences, no commentary), in exactly this shape:
+{"kind": "historical", "template": "a full expanded-prompt sentence using %%s exactly once as a placeholder for the subject"}
+
+"kind" must be "historical" (resembles something that really existed/exists) or "surreal" (a whimsical/creative treatment).`, label)
+
+	text, err := vertexTextGenerate(token, prompt)
 	if err != nil {
 		return nil, err
 	}
-	return parseStyleProposalJSON(text, existingLabels, subject)
+	return parseNamedStyleTemplateJSON(text, label, subject)
 }
