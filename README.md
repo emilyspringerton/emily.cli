@@ -107,6 +107,154 @@ emily install --systemd           # generate systemd user unit
 emily install --systemd --write   # install to ~/.config/systemd/user/
 ```
 
+### Start — launch the Emily OS agent stack
+
+```bash
+emily start                # observation-watcher + emily-agent RSI daemon, detached
+emily start --iduna        # also starts iduna.service via systemctl --user
+emily start --dry-run      # show what would be started
+```
+
+### TUI — full-terminal dashboard
+
+```bash
+emily tui               # 3-column Bloomberg-style dashboard: roadmap | tasks | health
+emily tui --fatbaby     # pre-activate the FatBaby panel in column 3 ('b' toggles at runtime)
+```
+
+### Backlog — curate observations into BACKLOG.md
+
+```bash
+emily backlog promote            # curate uncurated FatBaby observations into the INTAKE QUEUE
+emily backlog curate --all       # pull everything uncurated
+emily backlog add <section> <item>       # append an item to a section
+emily backlog add-section <title>        # open a new SECTION
+emily backlog done <item-id>             # mark an item [x]
+emily backlog archive / compress         # DONE.md housekeeping
+```
+
+### Changelog — per-repo CHANGELOG.md entries
+
+```bash
+emily changelog add <repo> "<what changed>"
+```
+
+### Session — cross-context session fingerprint
+
+```bash
+emily session new        # mint a fresh sess-YYYYMMDD-HHMM-<8hex> tag
+emily session current    # print the active tag
+```
+
+Auto-stamped as `run_id`/`session:` on every `apples post`, `changelog add`, and `observe` call.
+
+### Key — store credentials in the CLI's env
+
+```bash
+emily key set GITHUB_TOKEN <token>          # target: this box's default env file
+emily key set NAME VALUE --target iduna     # or --target emily
+emily key set NAME VALUE --file <path>      # explicit file override
+emily key show NAME
+emily key unset NAME
+```
+
+### Prompt-o-verse — generate + publish gallery nodes
+
+```bash
+emily promptoverse add <subject> <count>   # queue <count> styles applied to <subject>, then drain
+emily promptoverse work                    # drain whatever's already queued (resume after a 429)
+emily promptoverse queue                   # list pending queue entries, oldest first
+emily promptoverse styles                  # list the reusable style registry
+```
+
+Requests are queued FIFO to a durable file (`EMILY/var/promptoverse-queue.jsonl`), not fired
+immediately — `add` enqueues then drains; if a drain is already mid-flight or queued, new
+requests wait their turn in arrival order. Draining stops (not retries) on a rate limit, leaving
+the remainder queued for `emily promptoverse work` later. Requires `gcloud` ADC authenticated on
+this box and `IDUNA_AGENT_SECRET` for an agent with `promptoverse.write`.
+
+### Context / Northstar — golden-doc tooling
+
+```bash
+emily context build              # compile all Tier 1 golden docs → EMILY/context/full-system-context.md
+emily northstar <repo>           # print <repo>/docs/NORTHSTAR.md (or docs2/NORTHSTAR.md)
+```
+
+### Chat — terminal chat with Emily Prime
+
+```bash
+emily chat                       # calls claude-haiku directly, no server
+emily chat --model <model> --session <file>
+```
+
+### GPT-2 — Emily Prime inference stack
+
+```bash
+emily gpt2 start [--port N] [--model ft|base] [--dry-run]
+emily gpt2 proxy
+emily gpt2 status
+emily gpt2 tokenizer
+emily gpt2 generate "<prompt>"    # alias: gen
+emily gpt2 health
+```
+
+### Train — GPT-2 fine-tuning pipeline
+
+```bash
+emily train build-dataset [--emily-root <path>] [--output <path>] [--mode lm|instruct]
+emily train upload <file> [<file>...]
+emily train status
+emily train stats
+emily train run-local
+```
+
+### Vault — founder-only password manager (loopback-only)
+
+```bash
+emily vault init
+emily vault unlock / lock / status
+emily vault add <name> / get <name> / list / delete <name>
+```
+
+### Memory — Emily Prime's observation digest
+
+```bash
+emily memory digest         # print the obs-digest from emily-memory/ in TUI format
+emily memory consolidate
+```
+
+### Claire — uncompressed subconscious log
+
+```bash
+emily claire "<entry>"      # append to CLAIRE.md — tech debt, failed approaches, env quirks
+```
+
+### Saga — documentation curation lifecycle (HQ-SPEC-DOC-102)
+
+```bash
+emily saga lint                    # frontmatter schema checks
+emily saga gaps
+emily saga which-doc-governs <path>
+emily saga status
+emily saga conflicts
+```
+
+### IDUNA — account tooling
+
+```bash
+emily iduna create-account          # mint a disposable DragonsNShit test account
+```
+
+### EmilyOS / Shankpit / Survival / Redgarden / Gsync — per-repo ops helpers
+
+```bash
+emily emilyos                          # EmilyOS policy kernel helper
+emily shankpit status|players|kick|observe|restart|leaderboard
+emily survival logs|status|restart     # EINHORN_SURVIVAL Minecraft server
+emily redgarden bots|status            # REDGARDEN bot ops
+emily gsync                            # Google Drive / gsync helper
+```
+
 ### Help
 
 ```bash
@@ -117,6 +265,7 @@ emily help status
 emily help sync
 emily help agents
 emily help prime-task
+emily help <any other command above>
 ```
 
 ---
@@ -156,13 +305,13 @@ Full docs: [`docs/NORTHSTAR.md`](docs/NORTHSTAR.md) · [`docs/COMMANDS.md`](docs
 ## Development
 
 ```bash
-./scripts/build.sh              # build + 75 tests + install
+./scripts/build.sh              # build + tests + install
 ./scripts/build.sh --no-install # CI mode
 go test ./...                   # unit tests only
 EMILY_COLOR=1 go test ./internal/color/...  # color-mode tests
 ```
 
-Tests: 75 across 5 packages (`cmd`, `internal/config`, `internal/iduna`, `internal/obs`, `internal/color`).
+Tests: 109 across 5 packages (`cmd`, `internal/config`, `internal/iduna`, `internal/obs`, `internal/color`).
 
 ---
 
