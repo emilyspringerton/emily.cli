@@ -161,10 +161,11 @@ emily key unset NAME
 ### Prompt-o-verse — generate + publish gallery nodes
 
 ```bash
-emily promptoverse add <subject> <count> [--force]   # queue <count> styles applied to <subject>, then drain
+emily promptoverse add <subject> <count> [--force] [--tag <style>]   # queue <count> styles applied to <subject>, then drain
 emily promptoverse work [--force]                    # drain whatever's already queued (resume after a 429)
 emily promptoverse queue                             # list pending queue entries, oldest first
 emily promptoverse styles                            # list the reusable style registry
+emily promptoverse brainstorm [--seed "a, b, c"]      # prompt GPT-2 to extend the style list, parse out candidate tags
 ```
 
 Requests are queued FIFO to a durable file (`EMILY/var/promptoverse-queue.jsonl`), not fired
@@ -201,6 +202,21 @@ linear 30s/failure). A failure older than 15 minutes doesn't count against a fre
 success resets the streak. That same extra wait is also added to every gap for the rest of a run,
 not just the first request. `--force` skips all of that for one run without turning off the
 tracking.
+
+`--tag <style>` forces one specific style into the batch, whether or not it's already in the
+registry — `emily promptoverse add princess 4 --tag gladiator` forces "gladiator" as slot 1
+(creating and persisting it via Vertex AI if it isn't already a known style, so it becomes
+reusable for every future subject too), then fills the other 3 through the normal
+deduped/variety-weighted selection. A tag that would duplicate what's already published/queued
+for the subject is ignored rather than force-added — dedup still wins.
+
+`emily promptoverse brainstorm` is a separate, standalone tool from the Vertex-based discovery
+above: it prompts GPT-2 (base checkpoint recommended — `emily gpt2 start --model base`; the
+fine-tuned checkpoint drifts into prose almost immediately) with the current registry as a
+comma-separated seed list and parses whatever plausible short tags come out of the completion.
+Nothing is added to the registry automatically — it's a review-only brainstorming aid, since base
+GPT-2 has no instruction-following and the vocabulary it drifts toward has no reason to stay
+on-topic.
 
 ### Context / Northstar — golden-doc tooling
 
