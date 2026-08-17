@@ -1,3 +1,17 @@
+## 2026-08-17
+
+- Added `emily promptoverse add <subject> <count>` + `emily promptoverse styles` — formalizes the
+  ad-hoc Python generation scripts written by hand while building Prompt-o-verse VS0 into real CLI
+  infrastructure. 10-style reusable registry (only genuine subject-agnostic art styles — tobacco
+  card, claymation, Renaissance oil painting, pixel art, LEGO, stained glass, Art Deco, pop art,
+  woodcut, watercolor — transformation concepts that only made sense for their original subject,
+  like "ice cream novelty," deliberately left out). Generates via Vertex AI's `gemini-2.5-flash-
+  image` using this box's existing `gcloud` ADC (no `GEMINI_API_KEY` needed), publishes each result
+  to IDUNA's `promptoverse.write` API. New `iduna.Client.PostPromptOVerseNode` +
+  `GetPromptOVerseLabels`. 4 new tests (slug normalization, style-registry integrity, bad-arg
+  handling). Live-verified: `emily promptoverse add "a red panda" 1` succeeded end to end on the
+  first real run, real image published at okemily.com/prompt-o-verse/. (sess-20260813-2154-dda37e8b)
+
 ## 2026-08-13
 
 - Added 'emily claire' command -- real but auditable log for CLAIRE.md's entropy/debris concept (git-tracked EMILY/claire-log.md + Apple type 'claire'), not the hidden/unaudited channel the doc's own text describes (sess-20260813-2154-dda37e8b)

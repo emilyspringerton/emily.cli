@@ -321,6 +321,89 @@ func (c *Client) DriveGet(fileID string) (*DriveFile, error) {
 	return &f, nil
 }
 
+// PromptOVerseNode is the payload for POST /api/v1/promptoverse/nodes.
+type PromptOVerseNode struct {
+	Slug           string            `json:"slug"`
+	Label          string            `json:"label"`
+	Subject        string            `json:"subject"`
+	Kind           string            `json:"kind"`
+	EZPrompt       string            `json:"ez_prompt"`
+	ExpandedPrompt string            `json:"expanded_prompt"`
+	ImageBase64    string            `json:"image_base64"`
+	Tags           map[string]string `json:"tags,omitempty"`
+}
+
+// PostPromptOVerseNode publishes one node to the Prompt-o-verse gallery.
+// Requires promptoverse.write (EMILY-PRIME has it as of 2026-08-17).
+func (c *Client) PostPromptOVerseNode(n PromptOVerseNode) (url string, err error) {
+	if err := c.Auth(); err != nil {
+		return "", err
+	}
+
+	body, _ := json.Marshal(n)
+	req, _ := http.NewRequest("POST", c.BaseURL+"/api/v1/promptoverse/nodes", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("post promptoverse node: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("post promptoverse node %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("post promptoverse node decode: %w", err)
+	}
+	return result.URL, nil
+}
+
+// GetPromptOVerseLabels returns the distinct style labels already published,
+// most-recently-used first -- used by `emily promptoverse add` to pick which
+// existing reusable styles to apply to a new subject.
+func (c *Client) GetPromptOVerseLabels() ([]string, error) {
+	if err := c.Auth(); err != nil {
+		return nil, err
+	}
+	req, _ := http.NewRequest("GET", c.BaseURL+"/api/v1/promptoverse/nodes", nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list promptoverse nodes: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list promptoverse nodes %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+
+	var wrapped struct {
+		Nodes []struct {
+			Label string `json:"label"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err != nil {
+		return nil, fmt.Errorf("list promptoverse nodes decode: %w", err)
+	}
+
+	seen := map[string]bool{}
+	var labels []string
+	for _, n := range wrapped.Nodes {
+		if n.Label != "" && !seen[n.Label] {
+			seen[n.Label] = true
+			labels = append(labels, n.Label)
+		}
+	}
+	return labels, nil
+}
+
 func filterByType(apples []Apple, appleType string) []Apple {
 	out := apples[:0]
 	for _, a := range apples {
