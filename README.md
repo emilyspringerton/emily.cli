@@ -161,8 +161,8 @@ emily key unset NAME
 ### Prompt-o-verse — generate + publish gallery nodes
 
 ```bash
-emily promptoverse add <subject> <count> [--force] [--tag <style>]   # queue <count> styles applied to <subject>, then drain
-emily promptoverse work [--force]                    # drain whatever's already queued (resume after a 429)
+emily promptoverse add <subject> <count> [--force] [--slow] [--tag <style>]   # queue <count> styles, then drain
+emily promptoverse work [--force] [--slow]           # drain whatever's already queued (resume after a 429)
 emily promptoverse queue                             # list pending queue entries, oldest first
 emily promptoverse styles                            # list the reusable style registry
 emily promptoverse brainstorm [--seed "a, b, c"]      # prompt GPT-2 to extend the style list, parse out candidate tags
@@ -201,7 +201,9 @@ request, not just between retries mid-drain — three separate invocations in a 
 linear 30s/failure). A failure older than 15 minutes doesn't count against a fresh attempt. Any
 success resets the streak. That same extra wait is also added to every gap for the rest of a run,
 not just the first request. `--force` skips all of that for one run without turning off the
-tracking.
+tracking. `--slow` doubles every wait the command applies (base delay, growth, and any backoff
+extra) — orthogonal to `--force`, which zeroes the backoff extra before `--slow` doubles whatever
+is left.
 
 `--tag <style>` forces one specific style into the batch, whether or not it's already in the
 registry — `emily promptoverse add princess 4 --tag gladiator` forces "gladiator" as slot 1

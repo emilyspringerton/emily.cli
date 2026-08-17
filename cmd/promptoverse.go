@@ -227,8 +227,8 @@ func promptoverseUsage() int {
 	fmt.Print(`emily promptoverse — generate + publish Prompt-o-verse gallery nodes
 
 Subcommands:
-  emily promptoverse add <subject> <count> [--force] [--tag <style>]   Queue <count> styles applied to <subject>, then drain
-  emily promptoverse work [--force]                    Drain whatever's already queued (e.g. resume after a 429)
+  emily promptoverse add <subject> <count> [--force] [--slow] [--tag <style>]   Queue <count> styles applied to <subject>, then drain
+  emily promptoverse work [--force] [--slow]           Drain whatever's already queued (e.g. resume after a 429)
   emily promptoverse queue                             List pending queue entries, oldest first
   emily promptoverse styles                            List the reusable style registry
   emily promptoverse brainstorm [--seed "a, b, c"]      Prompt GPT-2 to extend the style list, parse out candidate tags
@@ -256,6 +256,9 @@ little longer before its very first request too (not just between retries),
 scaling with how many times in a row it's recently failed -- and that same
 extra wait is added to every gap for the rest of that run, not just the
 first one. --force skips all of that for one run (bookkeeping still happens).
+--slow doubles every wait this command applies (base delay, growth, and any
+backoff extra) -- orthogonal to --force, which zeroes the backoff extra
+before --slow doubles whatever's left.
 
 Requires: gcloud ADC already authenticated (this box's existing setup),
 IDUNA_AGENT_SECRET for EMILY-PRIME (promptoverse.write), iduna.service running.
@@ -442,6 +445,7 @@ func selectStylesForSubject(pool []style, count int, exclude map[string]bool, gl
 
 func runPromptOVerseAdd(args []string) int {
 	force := false
+	slow := false
 	tag := ""
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
@@ -449,6 +453,8 @@ func runPromptOVerseAdd(args []string) int {
 		switch {
 		case a == "--force":
 			force = true
+		case a == "--slow":
+			slow = true
 		case a == "--tag":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "emily promptoverse add: --tag requires a value")
@@ -465,7 +471,7 @@ func runPromptOVerseAdd(args []string) int {
 	args = rest
 
 	if len(args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: emily promptoverse add <subject> <count> [--force] [--tag <style>]")
+		fmt.Fprintln(os.Stderr, "usage: emily promptoverse add <subject> <count> [--force] [--slow] [--tag <style>]")
 		return 1
 	}
 	subject := strings.TrimSpace(args[0])
@@ -619,14 +625,18 @@ func runPromptOVerseAdd(args []string) int {
 	}
 	fmt.Printf("queued %d requests for %q (FIFO — behind anything already pending)\n", len(newItems), subject)
 
-	return drainQueue(cfg, force)
+	return drainQueue(cfg, force, slow)
 }
 
 func runPromptOVerseWork(args []string) int {
 	force := false
+	slow := false
 	for _, a := range args {
-		if a == "--force" {
+		switch a {
+		case "--force":
 			force = true
+		case "--slow":
+			slow = true
 		}
 	}
 	cfg, err := config.Resolve()
@@ -634,7 +644,7 @@ func runPromptOVerseWork(args []string) int {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
 	}
-	return drainQueue(cfg, force)
+	return drainQueue(cfg, force, slow)
 }
 
 // drainQueue processes the queue strictly front-to-back (FIFO). On a real
@@ -655,7 +665,13 @@ func runPromptOVerseWork(args []string) int {
 // the run goes on (promptoverseEffectiveDelay) -- founder, real-time: "we
 // are still getting apilimited in like our 3rd or 4th gen usually," so a
 // flat per-request delay wasn't enough on its own.
-func drainQueue(cfg *config.Config, force bool) int {
+//
+// slow doubles every wait this function applies (preemptive backoff, and
+// every gap between requests) -- founder: "add --slow flag that doubles
+// waits." Orthogonal to force: force zeroes out the backoff-driven extras,
+// slow then doubles whatever's left (including just the base+growth
+// portion if force was also given).
+func drainQueue(cfg *config.Config, force, slow bool) int {
 	path := queuePath(cfg)
 	items, err := loadQueue(path)
 	if err != nil {
@@ -676,10 +692,14 @@ func drainQueue(cfg *config.Config, force bool) int {
 			return 1
 		}
 		backoffExtra = backoffWaitFor(st, time.Now().UTC())
-		if backoffExtra > 0 {
+		preWait := backoffExtra
+		if slow {
+			preWait *= 2
+		}
+		if preWait > 0 {
 			fmt.Fprintf(os.Stderr, "%d recent consecutive failure(s) -- waiting an extra %s before the first request (use --force to skip)\n",
-				st.ConsecutiveFailures, backoffExtra)
-			time.Sleep(backoffExtra)
+				st.ConsecutiveFailures, preWait)
+			time.Sleep(preWait)
 		}
 	}
 
@@ -765,7 +785,7 @@ func drainQueue(cfg *config.Config, force bool) int {
 			fmt.Fprintf(os.Stderr, "warning: failed to persist queue after success: %v\n", err)
 		}
 		if len(items) > 0 {
-			delay := promptoverseEffectiveDelay(ok, backoffExtra)
+			delay := promptoverseEffectiveDelay(ok, backoffExtra, slow)
 			fmt.Fprintf(os.Stderr, "  waiting %s before the next request...\n", delay)
 			time.Sleep(delay)
 		}
@@ -789,16 +809,22 @@ func promptoverseInterRequestDelay() time.Duration {
 // promptoverseEffectiveDelay is the actual spacing before the NEXT request
 // in a run: the configurable base, plus promptoverseInterRequestGrowth for
 // every successful request already made this run (capped), plus any
-// cross-invocation backoff extra (0 when --force skipped it). successesSoFar
-// resets to 0 every new invocation -- deliberately not persisted the way
-// the cross-run backoff state is, since it's tracking "how far into THIS
-// burst am I," a different question than "how many recent runs failed."
-func promptoverseEffectiveDelay(successesSoFar int, backoffExtra time.Duration) time.Duration {
+// cross-invocation backoff extra (0 when --force skipped it), all doubled
+// if slow is set (founder: "add --slow flag that doubles waits").
+// successesSoFar resets to 0 every new invocation -- deliberately not
+// persisted the way the cross-run backoff state is, since it's tracking
+// "how far into THIS burst am I," a different question than "how many
+// recent runs failed."
+func promptoverseEffectiveDelay(successesSoFar int, backoffExtra time.Duration, slow bool) time.Duration {
 	growth := time.Duration(successesSoFar) * promptoverseInterRequestGrowth
 	if growth > promptoverseInterRequestGrowthCap {
 		growth = promptoverseInterRequestGrowthCap
 	}
-	return promptoverseInterRequestDelay() + growth + backoffExtra
+	delay := promptoverseInterRequestDelay() + growth + backoffExtra
+	if slow {
+		delay *= 2
+	}
+	return delay
 }
 
 func gcloudAccessToken() (string, error) {

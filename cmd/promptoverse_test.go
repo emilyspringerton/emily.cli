@@ -75,6 +75,12 @@ func TestRunPromptOVerseAdd_ParsesTagFlagAndStripsFromPositionalArgs(t *testing.
 	}
 }
 
+func TestRunPromptOVerseAdd_ParsesSlowFlag(t *testing.T) {
+	if code := runPromptOVerseAdd([]string{"princess", "--slow", "not-a-number"}); code != 1 {
+		t.Errorf("expected exit 1 (bad count) once --slow was correctly stripped, got %d", code)
+	}
+}
+
 func TestStyleByLabel(t *testing.T) {
 	st, ok := styleByLabel("stained glass")
 	if !ok {
@@ -273,9 +279,9 @@ func TestPromptoverseEffectiveDelay_GrowsWithSuccessesThisRun(t *testing.T) {
 	// Regression for the founder's exact report: "we are still getting
 	// apilimited in like our 3rd or 4th gen usually" -- the gap before the
 	// 4th request must be meaningfully larger than the gap before the 2nd.
-	d0 := promptoverseEffectiveDelay(0, 0)
-	d1 := promptoverseEffectiveDelay(1, 0)
-	d3 := promptoverseEffectiveDelay(3, 0)
+	d0 := promptoverseEffectiveDelay(0, 0, false)
+	d1 := promptoverseEffectiveDelay(1, 0, false)
+	d3 := promptoverseEffectiveDelay(3, 0, false)
 	if !(d0 < d1 && d1 < d3) {
 		t.Errorf("expected strictly increasing delay across a run, got d0=%v d1=%v d3=%v", d0, d1, d3)
 	}
@@ -286,7 +292,7 @@ func TestPromptoverseEffectiveDelay_GrowsWithSuccessesThisRun(t *testing.T) {
 
 func TestPromptoverseEffectiveDelay_GrowthCaps(t *testing.T) {
 	t.Setenv("PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS", "")
-	got := promptoverseEffectiveDelay(1000, 0)
+	got := promptoverseEffectiveDelay(1000, 0, false)
 	want := promptoverseDefaultInterRequestDelay + promptoverseInterRequestGrowthCap
 	if got != want {
 		t.Errorf("expected growth to cap at %v total, got %v", want, got)
@@ -295,9 +301,18 @@ func TestPromptoverseEffectiveDelay_GrowthCaps(t *testing.T) {
 
 func TestPromptoverseEffectiveDelay_AddsBackoffExtraOnTop(t *testing.T) {
 	t.Setenv("PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS", "")
-	got := promptoverseEffectiveDelay(0, 45*time.Second)
+	got := promptoverseEffectiveDelay(0, 45*time.Second, false)
 	want := promptoverseDefaultInterRequestDelay + 45*time.Second
 	if got != want {
 		t.Errorf("expected the backoff extra to add on top of the base delay, got %v want %v", got, want)
+	}
+}
+
+func TestPromptoverseEffectiveDelay_SlowDoublesEverything(t *testing.T) {
+	t.Setenv("PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS", "")
+	normal := promptoverseEffectiveDelay(2, 20*time.Second, false)
+	slow := promptoverseEffectiveDelay(2, 20*time.Second, true)
+	if slow != normal*2 {
+		t.Errorf("expected --slow to exactly double the effective delay, got normal=%v slow=%v", normal, slow)
 	}
 }
