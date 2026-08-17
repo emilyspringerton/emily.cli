@@ -163,6 +163,14 @@ func TestSelectStylesForSubject_IncludesNewVarietyStyles(t *testing.T) {
 	}
 }
 
+func TestPromptoverseStyles_IncludesFounderNamedAdditions(t *testing.T) {
+	for _, want := range []string{"whiteboard", "paper-craft", "anime", "kawaii"} {
+		if _, ok := styleByLabel(want); !ok {
+			t.Errorf("expected %q to be a registered style (founder: \"add these as top level hard coded styles\")", want)
+		}
+	}
+}
+
 func TestQueue_WriteQueueOverwritesCompletely(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "queue.jsonl")
 	if err := writeQueue(path, []queueItem{

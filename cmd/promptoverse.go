@@ -164,6 +164,29 @@ var promptoverseStyles = []style{
 		return fmt.Sprintf("%s sculpted entirely out of candy -- gumdrops, licorice, and "+
 			"hard-candy shell -- glossy sugar-glaze texture, bright saturated colors.", s)
 	}},
+	// Founder-named additions (2026-08-17): "add these as top level hard
+	// coded styles to potentially pull from - Whiteboard, Paper-craft,
+	// Anime, Kawaii." Same bar as everything above -- subject-agnostic
+	// transformation concepts, not tied to one original subject.
+	{"whiteboard", "surreal", func(s string) string {
+		return fmt.Sprintf("%s drawn as a quick whiteboard marker sketch, loose expressive "+
+			"linework, visible marker squeak texture, faint ghosting from erased previous "+
+			"drawings, dry-erase board surface.", s)
+	}},
+	{"paper-craft", "surreal", func(s string) string {
+		return fmt.Sprintf("%s built from layered paper-craft cutouts, folded and glued "+
+			"cardstock forms, visible paper edges and shadow gaps between layers, "+
+			"diorama-style studio lighting.", s)
+	}},
+	{"anime", "surreal", func(s string) string {
+		return fmt.Sprintf("%s illustrated in 1990s cel-shaded anime style, bold linework, "+
+			"flat saturated color blocks, dramatic speed lines, expressive large eyes.", s)
+	}},
+	{"kawaii", "surreal", func(s string) string {
+		return fmt.Sprintf("%s reimagined in kawaii style, rounded chibi proportions, "+
+			"pastel color palette, oversized sparkling eyes, tiny blush marks, soft "+
+			"rounded shading.", s)
+	}},
 }
 
 func styleByLabel(label string) (style, bool) {
