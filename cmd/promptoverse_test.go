@@ -222,3 +222,24 @@ func TestAppendQueue_DifferentStyleSameSubjectBothKept(t *testing.T) {
 		t.Errorf("expected both distinct styles for the same subject to be kept, got %d: %+v", len(items), items)
 	}
 }
+
+func TestPromptoverseInterRequestDelay_DefaultAndOverride(t *testing.T) {
+	t.Setenv("PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS", "")
+	if got := promptoverseInterRequestDelay(); got != promptoverseDefaultInterRequestDelay {
+		t.Errorf("expected the default %v with no override, got %v", promptoverseDefaultInterRequestDelay, got)
+	}
+
+	t.Setenv("PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS", "45")
+	if got := promptoverseInterRequestDelay(); got != 45*time.Second {
+		t.Errorf("expected the override to win, got %v", got)
+	}
+
+	// Malformed/non-positive overrides fall back to the default rather than
+	// silently producing a zero or negative sleep.
+	for _, bad := range []string{"not-a-number", "0", "-5"} {
+		t.Setenv("PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS", bad)
+		if got := promptoverseInterRequestDelay(); got != promptoverseDefaultInterRequestDelay {
+			t.Errorf("expected a malformed override %q to fall back to the default, got %v", bad, got)
+		}
+	}
+}

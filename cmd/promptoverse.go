@@ -57,9 +57,16 @@ const (
 	promptoverseVertexModel     = "gemini-2.5-flash-image"
 	promptoverseVertexTextModel = "gemini-2.5-flash" // text-only, used for style discovery -- see promptoverse_discover.go
 
-	promptoverseInterRequestDelay  = 6 * time.Second // spacing between successful Vertex AI calls
-	promptoverseQueueFileName      = "promptoverse-queue.jsonl"
-	promptoverseDiscoveredFileName = "promptoverse-discovered-styles.json"
+	// promptoverseDefaultInterRequestDelay spacing between successful Vertex
+	// AI calls during a drain. Bumped 6s -> 20s (founder, real-time: "when
+	// draining the queue we need a longer wait between") -- 6s wasn't
+	// enough to reliably avoid 429s across this session's batches.
+	// Overridable via PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS so a future
+	// "still not long enough" / "too conservative now" doesn't need a code
+	// change to tune.
+	promptoverseDefaultInterRequestDelay = 20 * time.Second
+	promptoverseQueueFileName            = "promptoverse-queue.jsonl"
+	promptoverseDiscoveredFileName       = "promptoverse-discovered-styles.json"
 )
 
 // style is one entry in the reusable style registry -- the "subcategory"
@@ -192,7 +199,8 @@ Example:
 Requests are queued FIFO to a durable file, not fired immediately -- if
 another 'add' is already mid-flight or queued, new requests wait their turn
 in arrival order. Draining stops (not retries) on a rate limit, leaving the
-remainder queued for 'emily promptoverse work' later.
+remainder queued for 'emily promptoverse work' later. 20s between successful
+requests by default -- override with PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS.
 
 Requires: gcloud ADC already authenticated (this box's existing setup),
 IDUNA_AGENT_SECRET for EMILY-PRIME (promptoverse.write), iduna.service running.
@@ -599,12 +607,23 @@ func drainQueue(cfg *config.Config) int {
 			fmt.Fprintf(os.Stderr, "warning: failed to persist queue after success: %v\n", err)
 		}
 		if len(items) > 0 {
-			time.Sleep(promptoverseInterRequestDelay)
+			time.Sleep(promptoverseInterRequestDelay())
 		}
 	}
 
 	fmt.Printf("\n%d published, %d skipped (already existed), queue empty.\n", ok, skipped)
 	return 0
+}
+
+// promptoverseInterRequestDelay reads PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS
+// if set (a positive integer), else returns promptoverseDefaultInterRequestDelay.
+func promptoverseInterRequestDelay() time.Duration {
+	if v := os.Getenv("PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return promptoverseDefaultInterRequestDelay
 }
 
 func gcloudAccessToken() (string, error) {

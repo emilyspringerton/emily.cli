@@ -170,8 +170,9 @@ emily promptoverse styles                  # list the reusable style registry
 Requests are queued FIFO to a durable file (`EMILY/var/promptoverse-queue.jsonl`), not fired
 immediately — `add` enqueues then drains; if a drain is already mid-flight or queued, new
 requests wait their turn in arrival order. Draining stops (not retries) on a rate limit, leaving
-the remainder queued for `emily promptoverse work` later. Requires `gcloud` ADC authenticated on
-this box and `IDUNA_AGENT_SECRET` for an agent with `promptoverse.write`.
+the remainder queued for `emily promptoverse work` later. 20s between successful requests by
+default — override with `PROMPTOVERSE_INTER_REQUEST_DELAY_SECONDS`. Requires `gcloud` ADC
+authenticated on this box and `IDUNA_AGENT_SECRET` for an agent with `promptoverse.write`.
 
 `add` deduplicates: it skips any style already published *or* already queued for that exact
 subject, and picks from what's left by ascending global usage (least-used styles across the whole
