@@ -69,13 +69,23 @@ type AppleListFilters struct {
 	AppleType  string
 }
 
-// Auth fetches a JWT if none exists or if it expires within 5 minutes.
+// Auth fetches a fresh JWT on every call -- founder, real-time: "again it
+// ended in an UNAUTHENTICATED error whats going on are you having to
+// rotate keys or what is happening" then "ok yea we are gonna need to
+// auto refresh the token like every api call or what." This used to
+// reuse a cached token as long as it claimed to still have >5 minutes of
+// life left, which meant a token that became invalid EARLIER than its own
+// exp claim (e.g. a long-running drain spanning an IDUNA restart, which
+// this session did repeatedly while other invocations were mid-run) had
+// no way to self-heal short of that specific process being killed and
+// restarted. IDUNA's auth endpoint is localhost and fast, so trading a
+// few ms of latency per call for "can never get stuck on a stale token"
+// is a clearly worthwhile trade -- tokenExp/mu are no longer meaningfully
+// used but kept on Client rather than ripped out, in case a future
+// caching strategy wants them back.
 func (c *Client) Auth() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.token != "" && time.Until(c.tokenExp) > 5*time.Minute {
-		return nil
-	}
 
 	body, _ := json.Marshal(map[string]string{
 		"agent_name":   c.AgentName,

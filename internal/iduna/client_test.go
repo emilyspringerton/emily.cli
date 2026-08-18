@@ -75,6 +75,36 @@ func TestAuth_success(t *testing.T) {
 	}
 }
 
+func TestAuth_AlwaysFetchesFreshEvenWithinExpiryWindow(t *testing.T) {
+	// Founder, real-time: "again it ended in an UNAUTHENTICATED error...
+	// ok yea we are gonna need to auto refresh the token like every api
+	// call or what." Auth() used to skip re-fetching as long as the
+	// cached token claimed >5 minutes of life left -- that's exactly the
+	// case a token invalidated some OTHER way (e.g. mid-run across an
+	// IDUNA restart) couldn't self-heal from. It must hit the auth
+	// endpoint every single call now, not just on the first one.
+	authCalls := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/auth/agent", func(w http.ResponseWriter, r *http.Request) {
+		authCalls++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintln(w, `{"access_token":"test-jwt","expires_in":3600}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
+	if err := c.Auth(); err != nil {
+		t.Fatalf("first Auth: %v", err)
+	}
+	if err := c.Auth(); err != nil {
+		t.Fatalf("second Auth: %v", err)
+	}
+	if authCalls != 2 {
+		t.Errorf("expected 2 real auth requests (no caching/skip), got %d", authCalls)
+	}
+}
+
 func TestAuth_wrongSecret(t *testing.T) {
 	srv := mockServer(t)
 	defer srv.Close()
