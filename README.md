@@ -177,6 +177,13 @@ emily promptoverse annotations [set|clear] ...       # manage subject-level prom
 emily promptoverse backfill-annotation <subject>     # mark already-published nodes as pre-annotation
 ```
 
+**Style sweeps** — `<count>` normally means "how many styles for this one subject." Omit
+`<subject>` *and* give `--tag` and it flips: `<count>` becomes "how many different subjects, all
+locked to this one style" (`emily promptoverse add 5 --tag "game sprite"` auto-picks 5 different
+subjects — never repeating one already picked this sweep, or one that already has this style — and
+locks all 5 to "game sprite," creating that style once, not per subject). The right shape for "give
+me N game sprites" or "give me N pixel-art pieces."
+
 **Style hybrids** — passing `--tag` more than once does *not* force N separate generations. It
 combines the tags into **one new blended style** instead (`emily promptoverse add Medusa --tag
 kawaii --tag FFXI` creates one "kawaii × FFXI" style and generates exactly one Medusa image in it,

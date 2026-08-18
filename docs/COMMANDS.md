@@ -469,6 +469,23 @@ emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]...
                              changing the subject's default
 ```
 
+#### Style sweeps (`<count>` with no subject, plus `--tag`)
+
+Normally `<count>` means "how many different *styles* for this one subject." But when `<subject>`
+is omitted **and** `--tag` is given, `<count>`'s meaning flips: it becomes "how many different
+*subjects*, all locked to this one style" — a **sweep** of one style across many auto-picked
+subjects, rather than many styles on one subject.
+
+```bash
+emily promptoverse add 5 --tag "game sprite"
+```
+
+Resolves/creates the `"game sprite"` style once, up front — not once per subject — then auto-picks
+5 different subjects (never repeating one already picked this sweep, or one that already has this
+exact style published/queued) and queues all 5 as `Forced`, at the front of the queue. This is the
+right shape for "give me N game sprites" or "give me N pixel-art pieces": many different subjects
+in one deliberately locked style, not variations of a single subject.
+
 #### Style hybrids (two or more `--tag` flags)
 
 Passing `--tag` more than once does **not** force N separate generations — it combines the tags
@@ -524,6 +541,9 @@ emily promptoverse add Medusa --tag kawaii --tag FFXI
 
 # Auto-pick the subject, no --tag
 emily promptoverse add 6
+
+# Style sweep: 5 different subjects, all locked to "game sprite"
+emily promptoverse add 5 --tag "game sprite"
 ```
 
 ---

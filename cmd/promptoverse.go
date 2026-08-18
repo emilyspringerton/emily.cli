@@ -347,6 +347,12 @@ Example:
     styles use, from every subject ever published (or discovered). Can
     also propose a brand new subject via Vertex AI, on a pity-adjusted
     chance, same as styles' spontaneous discovery.
+  emily promptoverse add 5 --tag "game sprite"
+    STYLE SWEEP -- no subject AND a --tag together flips <count>'s
+    meaning: 5 DIFFERENT auto-picked subjects, all locked to "game
+    sprite" (creating it once via Vertex AI if new), not "game sprite" as
+    one of 5 styles for a single subject. Never repeats a subject already
+    picked this sweep or one that already has this style.
 
 Style hybrids -- passing --tag more than once does NOT force N separate
 generations. It combines the tags into ONE new blended style ("hybrid",
