@@ -1,4 +1,5 @@
 ## 2026-08-18
+- emily promptoverse regenerate <slug> --note - client-side counterpart to IDUNA's variants endpoint (sess-20260813-2154-dda37e8b)
 - --tag forced add now jumps to the front of the queue (not just appended behind pending items); subject-with-no-count shape added for --tag (sess-20260813-2154-dda37e8b)
 - emily promptoverse mashups: LLM-judgment mashup/hybrid detection (Gemini active, Claude parity), internal/mashupjudge, hourly systemd timer, live-verified against real Vertex AI (sess-20260813-2154-dda37e8b)
 - README.md Ontology section: requirementizes subject-identity semantics (compositional ambiguity, paraphrase equivalence, definite/indefinite reference, stateless vs stateful, fixed/zero points in time) surfaced while scoping mashup discovery (sess-20260813-2154-dda37e8b)
