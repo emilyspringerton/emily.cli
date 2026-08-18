@@ -34,6 +34,9 @@ func TestResolve_defaults(t *testing.T) {
 	if cfg.EmilyRoot != "/home/fatbaby/EMILY" {
 		t.Errorf("EmilyRoot default: got %q", cfg.EmilyRoot)
 	}
+	if cfg.TylerRoot != "/home/fatbaby/TYLER" {
+		t.Errorf("TylerRoot default: got %q", cfg.TylerRoot)
+	}
 }
 
 func TestResolve_envOverride(t *testing.T) {

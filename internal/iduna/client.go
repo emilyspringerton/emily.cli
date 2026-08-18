@@ -388,6 +388,7 @@ func (c *Client) PostPromptOVerseNode(n PromptOVerseNode) (url string, err error
 // node -- enough for `emily promptoverse add` to dedupe against and weigh
 // style variety, without pulling full prompts/images.
 type PromptOVerseNodeSummary struct {
+	Slug    string `json:"slug"`
 	Subject string `json:"subject"`
 	Label   string `json:"label"`
 }
@@ -503,6 +504,35 @@ func (c *Client) AddPromptOVerseVariant(slug string, v PromptOVerseVariant) (url
 		return "", fmt.Errorf("add promptoverse variant decode: %w", err)
 	}
 	return result.URL, nil
+}
+
+// MergeNodeTags overlays extra key/values onto an existing node's Tags
+// without touching its image/prompt data -- used to backfill metadata
+// onto nodes published before some later context existed (e.g. a
+// subject-level annotation added after the fact; see `emily promptoverse
+// backfill-annotation`). Requires promptoverse.write.
+func (c *Client) MergeNodeTags(slug string, tags map[string]string) error {
+	if err := c.Auth(); err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string]any{"tags": tags})
+	req, _ := http.NewRequest("PATCH", c.BaseURL+"/api/v1/promptoverse/nodes/"+slug+"/tags", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("merge promptoverse node tags: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrPromptOVerseNodeNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		return fmt.Errorf("merge promptoverse node tags %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+	return nil
 }
 
 func filterByType(apples []Apple, appleType string) []Apple {
