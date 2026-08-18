@@ -1,4 +1,5 @@
 ## 2026-08-18
+- emily promptoverse mashups: LLM-judgment mashup/hybrid detection (Gemini active, Claude parity), internal/mashupjudge, hourly systemd timer, live-verified against real Vertex AI (sess-20260813-2154-dda37e8b)
 - README.md Ontology section: requirementizes subject-identity semantics (compositional ambiguity, paraphrase equivalence, definite/indefinite reference, stateless vs stateful, fixed/zero points in time) surfaced while scoping mashup discovery (sess-20260813-2154-dda37e8b)
 - emily backup run/decrypt: Google Cloud backup tooling for iduna (client-side AES-256-GCM encrypted)/promptoverse/fatbaby data, secrets/logs excluded from archives, live-verified against gs://project-d24a71e9-2daf-4b2d-917-backups (sess-20260813-2154-dda37e8b)
 - fix(iduna): Client.Auth() now fetches a fresh JWT on every call instead of reusing a cached one until its exp claim says <5min left -- fixes UNAUTHENTICATED errors from a token invalidated some other way mid-run (e.g. across an iduna.service restart) (sess-20260813-2154-dda37e8b)
