@@ -416,7 +416,12 @@ current trademarks etc." Whether a given subject is even *generatable* at all is
 zero-point-evaluated judgment — it depends on the generation platform's training data and current
 trademark/IP state at query time, not a fixed property of the label "Rapunzel." The same subject
 could plausibly succeed or fail identical queries at different points in time for reasons that have
-nothing to do with the taxonomy and everything to do with an external, drifting fixed point.
+nothing to do with the taxonomy and everything to do with an external, drifting fixed point. Put
+concretely, with a real horizon on it — founder: "disney owning rapunzel icecream in 2026 may not
+at all be that way in 2046." Twenty years is not a hypothetical timescale for a durable taxonomy
+asset (§6 of the northstar names the dataset itself, not just the gallery, as the product); the
+trademark/IP state a content-policy decision depends on today is not guaranteed to hold for the
+lifetime of the data this system is building.
 
 Everything above was worked out against *subjects*, but the same ambiguities are plausible for
 *styles*/tags too (paraphrase equivalence, compositional vs. coincidental overlap, drift over
