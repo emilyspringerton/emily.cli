@@ -1,0 +1,31 @@
+# Prompt-o-verse LLM-judgment mashup/hybrid detection -- user-level systemd
+# unit (no sudo required). Oneshot: runs `emily promptoverse mashups` for
+# both subjects and styles once, triggered on a schedule by
+# promptoverse-mashups.timer, not run continuously.
+#
+# See internal/mashupjudge's package doc comment and
+# EMILY/docs/NORTHSTAR_PROMPT_O_VERSE.md §9 for why this exists (a first
+# lexical/string-matching attempt was abandoned once tested against real
+# counterexamples -- "tuxedo duck" is not a mashup of "tuxedo" + "duck"
+# even though a string-matching rule would think so).
+#
+# Founder direction (2026-08-18): "it should run once an hour to detect
+# hybrids."
+#
+# Deploy:
+#   cd /home/fatbaby/emily.cli && go build -o ~/.local/bin/emily .
+#   cp scripts/promptoverse-mashups.service scripts/promptoverse-mashups.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now promptoverse-mashups.timer
+
+[Unit]
+Description=Prompt-o-verse LLM-judgment mashup/hybrid detection (subjects + styles)
+After=network-online.target iduna.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/fatbaby/emily.cli
+ExecStart=/home/fatbaby/.local/bin/emily promptoverse mashups --target subjects
+ExecStart=/home/fatbaby/.local/bin/emily promptoverse mashups --target styles
+StandardOutput=append:/home/fatbaby/EMILY/var/logs/promptoverse-mashups.log
+StandardError=append:/home/fatbaby/EMILY/var/logs/promptoverse-mashups.log

@@ -275,6 +275,8 @@ func RunPromptOVerse(args []string) int {
 		return runPromptOVersePromote(args[1:])
 	case "promote-subject":
 		return runPromptOVersePromoteSubject(args[1:])
+	case "mashups":
+		return runPromptOVerseMashups(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "emily promptoverse: unknown subcommand %q\n\n", args[0])
 		return promptoverseUsage()
@@ -294,6 +296,10 @@ Subcommands:
                                 [--max-tokens N] [--temperature F] [--via server|proxy|emily]
   emily promptoverse promote <label> [--rare]           Turn a candidate/name into a real persisted style
   emily promptoverse promote-subject <label> [--rare]   Turn a candidate/name into a real known subject
+  emily promptoverse mashups [--target subjects|styles] [--provider gemini|claude|all] [--subject <label>]
+                                LLM-judge which subjects/styles are genuine compositional mashups of
+                                others, or paraphrase-equivalent hybrids -- NOT string matching, see
+                                internal/mashupjudge and NORTHSTAR_PROMPT_O_VERSE.md §9 for why
 
 Example:
   emily promptoverse add ducks 6

@@ -1,0 +1,18 @@
+# Runs promptoverse-mashups.service once an hour.
+#
+# Founder direction (2026-08-18): "it should run once an hour to detect
+# hybrids." The command upserts results keyed by (subject/style,
+# provider) -- see cmd/promptoverse_mashups.go's upsertMashupJudgments --
+# so a missed or overlapping fire just re-judges, never duplicates or
+# corrupts state.
+
+[Unit]
+Description=Hourly timer for Prompt-o-verse LLM-judgment mashup/hybrid detection
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+Persistent=false
+
+[Install]
+WantedBy=timers.target
