@@ -250,6 +250,14 @@ func RunPromptOVerse(args []string) int {
 	if len(args) == 0 {
 		return promptoverseUsage()
 	}
+	// Best-effort, every invocation: keep the hardcoded-registry export
+	// fresh for IDUNA's discovery page (GET /api/v1/promptoverse/discovery)
+	// to read -- the hardcoded list only changes when this binary is
+	// rebuilt, so "refresh on every command" is simpler than tracking when
+	// it actually changed, and cheap enough not to matter.
+	if cfg, err := config.Resolve(); err == nil {
+		_ = writeHardcodedStylesSnapshot(cfg)
+	}
 	switch args[0] {
 	case "add":
 		return runPromptOVerseAdd(args[1:])
@@ -314,6 +322,48 @@ Requires: gcloud ADC already authenticated (this box's existing setup),
 IDUNA_AGENT_SECRET for EMILY-PRIME (promptoverse.write), iduna.service running.
 `)
 	return 1
+}
+
+// hardcodedStyleSnapshot is one entry in the exported hardcoded-registry
+// file -- IDUNA has no access to promptoverseStyles/promptoverseRareStyles
+// (they're Go source in this binary, not data), so this is the only way
+// the discovery page (founder: "wheres the link to the tag discovery page
+// with the candidates for style promotion") can show the full picture.
+type hardcodedStyleSnapshot struct {
+	Label string `json:"label"`
+	Kind  string `json:"kind"`
+	Rare  bool   `json:"rare"`
+}
+
+func hardcodedStylesSnapshotPath(cfg *config.Config) string {
+	root := cfg.EmilyRoot
+	if root == "" {
+		root = "/home/fatbaby/EMILY"
+	}
+	return filepath.Join(root, "var", "promptoverse-hardcoded-styles.json")
+}
+
+func writeHardcodedStylesSnapshot(cfg *config.Config) error {
+	snap := make([]hardcodedStyleSnapshot, 0, len(promptoverseStyles)+len(promptoverseRareStyles))
+	for _, st := range promptoverseStyles {
+		snap = append(snap, hardcodedStyleSnapshot{Label: st.Label, Kind: st.Kind})
+	}
+	for _, st := range promptoverseRareStyles {
+		snap = append(snap, hardcodedStyleSnapshot{Label: st.Label, Kind: st.Kind, Rare: true})
+	}
+	path := hardcodedStylesSnapshotPath(cfg)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func runPromptOVerseStyles() int {
@@ -1053,8 +1103,24 @@ func drainQueue(cfg *config.Config, force, slow bool) int {
 				// retrying gets the identical result forever, which would
 				// otherwise jam every other queued request behind it
 				// (founder-visible, 2026-08-17: "anime x Rapunzel" hit
-				// this and looked exactly like an API-key problem).
+				// this and looked exactly like an API-key problem). Never
+				// retried -- recorded to the dead-letter dataset instead,
+				// for later analysis of which (subject, style) pairs
+				// correlate with IP-sensitive blocks (founder: "rapunzel
+				// is not disney but certain depictions of her are so
+				// icecream or candy rapunzle may proportionately cause
+				// more content sensitive api responses").
 				fmt.Fprintf(os.Stderr, "  SKIPPED (content policy): %s x %s -- %v\n", st.Label, it.Subject, err)
+				var cbErr *contentBlockedError
+				if errors.As(err, &cbErr) {
+					entry := deadLetterEntry{
+						Subject: it.Subject, StyleLabel: st.Label,
+						Reason: cbErr.Reason, Message: cbErr.Message, BlockedAt: time.Now().UTC(),
+					}
+					if err := appendDeadLetter(deadLetterPath(cfg), entry); err != nil {
+						fmt.Fprintf(os.Stderr, "warning: failed to record dead-letter entry: %v\n", err)
+					}
+				}
 				skipped++
 				items = items[1:]
 				if err := writeQueue(path, items); err != nil {
@@ -1230,7 +1296,7 @@ func parseVertexImageResponse(raw []byte) ([]byte, error) {
 				msg += ": " + c.FinishMessage
 			}
 			if vertexContentBlockReasons[c.FinishReason] {
-				return nil, fmt.Errorf("%w: %s", errVertexContentBlocked, msg)
+				return nil, &contentBlockedError{Reason: c.FinishReason, Message: c.FinishMessage}
 			}
 			return nil, fmt.Errorf("no image data in response (%s)", msg)
 		}
@@ -1238,14 +1304,36 @@ func parseVertexImageResponse(raw []byte) ([]byte, error) {
 	return nil, fmt.Errorf("no image data in response")
 }
 
-// errVertexContentBlocked marks a PERMANENT rejection -- Vertex's own
+// contentBlockedError marks a PERMANENT rejection -- Vertex's own
 // safety/IP-content policy declined this exact prompt, not a transient
 // failure retrying would fix. drainQueue skips-and-continues on this
 // specific error instead of stopping the whole run, same shape as
-// iduna.ErrPromptOVerseNodeExists. Discovered live (2026-08-17): "anime x
-// Rapunzel" hit IMAGE_PROHIBITED_CONTENT (a real Disney-IP filter) and,
-// before this fix, looked exactly like an auth failure while also
-// permanently jamming everything queued behind it.
+// iduna.ErrPromptOVerseNodeExists, and records it to the dead-letter
+// dataset (promptoverse_deadletter.go) rather than just logging it.
+// Discovered live (2026-08-17): "anime x Rapunzel" hit
+// IMAGE_PROHIBITED_CONTENT (a real Disney-IP filter) and, before this fix,
+// looked exactly like an auth failure while also permanently jamming
+// everything queued behind it. Structured (Reason/Message fields) rather
+// than a formatted string so the dead-letter record doesn't need to
+// re-parse error text.
+type contentBlockedError struct {
+	Reason  string
+	Message string
+}
+
+func (e *contentBlockedError) Error() string {
+	msg := e.Reason
+	if e.Message != "" {
+		msg += ": " + e.Message
+	}
+	return "vertex ai: content policy blocked this prompt: " + msg
+}
+
+// Is lets errors.Is(err, errVertexContentBlocked) keep working as the
+// simple "is this the permanent-block class of error" check, without
+// every caller needing errors.As + the concrete type.
+func (e *contentBlockedError) Is(target error) bool { return target == errVertexContentBlocked }
+
 var errVertexContentBlocked = errors.New("vertex ai: content policy blocked this prompt")
 
 var vertexContentBlockReasons = map[string]bool{
