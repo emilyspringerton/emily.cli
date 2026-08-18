@@ -112,6 +112,12 @@ func main() {
 		code = cmd.RunClaire(rest)
 	case "promptoverse":
 		code = cmd.RunPromptOVerse(rest)
+	case "backup":
+		if len(rest) > 0 && rest[0] == "decrypt" {
+			code = cmd.RunBackupDecrypt(rest[1:])
+		} else {
+			code = cmd.RunBackup(rest)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "emily: unknown command %q\n\n", command)
 		printUsage()
