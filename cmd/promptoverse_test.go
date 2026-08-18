@@ -15,6 +15,14 @@ func TestSlugifyPO(t *testing.T) {
 		"stained glass":        "stained-glass",
 		"1910s Tobacco Card":   "1910s-tobacco-card",
 		"pop art/silkscreen!!": "pop-artsilkscreen",
+		// Regression: a dropped punctuation rune with spaces on both sides
+		// (the "×" joining a hybrid style label) previously left a bare
+		// double hyphen behind, which IDUNA's slug endpoint 400s on --
+		// found live 2026-08-18 generating "kawaii × FFXI" x Medusa.
+		"kawaii × FFXI": "kawaii-ffxi",
+		"-leading-":     "leading",
+		"trailing---":   "trailing",
+		"a  ×  ×  b":    "a-b",
 	}
 	for in, want := range cases {
 		if got := slugifyPO(in); got != want {

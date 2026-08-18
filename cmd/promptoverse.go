@@ -301,6 +301,10 @@ func RunPromptOVerse(args []string) int {
 		return runPromptOVerseMashups(args[1:])
 	case "regenerate":
 		return runPromptOVerseRegenerate(args[1:])
+	case "annotations":
+		return runPromptOVerseAnnotations(args[1:])
+	case "backfill-annotation":
+		return runPromptOVerseBackfillAnnotation(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "emily promptoverse: unknown subcommand %q\n\n", args[0])
 		return promptoverseUsage()
@@ -439,6 +443,13 @@ type queueItem struct {
 	// should requeue on every run except if --tag hard coded a tag."
 	// Everything else is fair game for auto-requeue to re-pick.
 	Forced bool `json:"forced,omitempty"`
+	// AnnotationAlias, if set, overrides which of the subject's stored
+	// annotation aliases gets applied at generation time -- empty means
+	// "use the subject's default alias" (the common case; see
+	// promptoverse_annotations.go). Set via --annotation-alias on `add`,
+	// e.g. a deliberate one-off batch that wants the "genshin-impact"
+	// framing of "Paimon" instead of the default "tyler-lore" one.
+	AnnotationAlias string `json:"annotation_alias,omitempty"`
 }
 
 func queuePath(cfg *config.Config) string {
@@ -780,7 +791,7 @@ func selectStylesForSubject(pool []style, count int, exclude map[string]bool, gl
 // original behavior -- there's no subject-only shape without --tag).
 func parseAddPositionalArgs(args []string, tag string) (subject string, count int, autoSubject bool, err error) {
 	if len(args) != 1 && len(args) != 2 {
-		return "", 0, false, fmt.Errorf("usage: emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]")
+		return "", 0, false, fmt.Errorf("usage: emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]...")
 	}
 	var countArg string
 	count = 1
@@ -808,7 +819,10 @@ func parseAddPositionalArgs(args []string, tag string) (subject string, count in
 func runPromptOVerseAdd(args []string) int {
 	force := false
 	slow := false
-	tag := ""
+	var tags []string
+	annotationText := ""
+	annotationFromLore := false
+	annotationAlias := ""
 	rest := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -818,19 +832,67 @@ func runPromptOVerseAdd(args []string) int {
 		case a == "--slow":
 			slow = true
 		case a == "--tag":
+			// Repeatable: "--tag X --tag Y" is a STYLE MASHUP request (two
+			// existing style labels blended into one new hybrid style, one
+			// generation), NOT two separate forced styles -- founder,
+			// real-time: "add Medusa --tag kawaii --tag FFXI" / "it can be
+			// created and then when we double tag it in our system we know
+			// its a hybrid" / "i mean its a style mashup". A single --tag
+			// behaves exactly as before.
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "emily promptoverse add: --tag requires a value")
 				return 1
 			}
-			tag = args[i+1]
+			tags = append(tags, args[i+1])
 			i++
 		case strings.HasPrefix(a, "--tag="):
-			tag = strings.TrimPrefix(a, "--tag=")
+			tags = append(tags, strings.TrimPrefix(a, "--tag="))
+		case a == "--annotation":
+			// Sets/overwrites this subject's default annotation, applied to
+			// this batch AND every future generation of this subject --
+			// annotations stick to the subject itself, not to one add call
+			// (founder: "annotations stick to the subject itself").
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "emily promptoverse add: --annotation requires a value")
+				return 1
+			}
+			annotationText = args[i+1]
+			i++
+		case a == "--annotation-from-lore":
+			// Same as --annotation, but the text is auto-derived from the
+			// TYLER hero compendium + Goetia frequency table instead of
+			// typed by hand.
+			annotationFromLore = true
+		case a == "--annotation-alias":
+			// Selects which of the subject's stored annotation aliases this
+			// batch's generations use, without changing the subject's
+			// default -- e.g. a deliberate one-off "genshin-impact"-aliased
+			// batch for a subject whose default alias is "tyler-lore".
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "emily promptoverse add: --annotation-alias requires a value")
+				return 1
+			}
+			annotationAlias = args[i+1]
+			i++
 		default:
 			rest = append(rest, a)
 		}
 	}
 	args = rest
+
+	// More than one --tag: combine into a single new hybrid style label
+	// (see ComponentStyles' doc comment in promptoverse_discover.go) rather
+	// than forcing N separate styles. A single --tag is unchanged.
+	tag := ""
+	var hybridComponents []string
+	switch len(tags) {
+	case 0:
+	case 1:
+		tag = tags[0]
+	default:
+		hybridComponents = tags
+		tag = strings.Join(tags, " × ")
+	}
 
 	subject, count, autoSubject, err := parseAddPositionalArgs(args, tag)
 	if err != nil {
@@ -866,6 +928,41 @@ func runPromptOVerseAdd(args []string) int {
 		}
 		subject = picked
 		fmt.Printf("auto-picked subject: %q\n", subject)
+	}
+
+	if annotationFromLore {
+		derived, ok, derr := deriveLoreAnnotation(cfg.TylerRoot, subject)
+		if derr != nil {
+			fmt.Fprintf(os.Stderr, "annotation lore lookup: %v\n", derr)
+			return 1
+		}
+		if !ok {
+			fmt.Fprintf(os.Stderr, "--annotation-from-lore: no TYLER hero compendium entry matches %q\n", subject)
+			return 1
+		}
+		annotationText = derived
+	}
+	if annotationText != "" {
+		alias := annotationAlias
+		if alias == "" {
+			if annotationFromLore {
+				alias = "tyler-lore"
+			} else {
+				alias = "manual"
+			}
+		}
+		source := "manual"
+		if annotationFromLore {
+			source = "tyler-lore"
+		}
+		if err := setSubjectAnnotationAlias(cfg, subject, alias, annotationText, source, annotationAlias == ""); err != nil {
+			fmt.Fprintf(os.Stderr, "save annotation: %v\n", err)
+			return 1
+		}
+		fmt.Printf("annotation %q set for %q (used for this batch and every future generation of this subject)\n", alias, subject)
+		if annotationAlias == "" {
+			annotationAlias = alias
+		}
 	}
 
 	discoveredPath := discoveredStylesPath(cfg)
@@ -955,6 +1052,7 @@ func runPromptOVerseAdd(args []string) int {
 					fmt.Fprintf(os.Stderr, "failed to create new style %q for --tag: %v\n", tag, expErr)
 					return 1
 				}
+				newStyle.ComponentStyles = hybridComponents
 				if err := appendDiscoveredStyle(discoveredPath, *newStyle); err != nil {
 					fmt.Fprintf(os.Stderr, "failed to persist forced style %q: %v\n", tag, err)
 					return 1
@@ -966,7 +1064,11 @@ func runPromptOVerseAdd(args []string) int {
 				}
 				forced = st
 				pool = append(pool, st)
-				fmt.Printf("forced a new style %q into the registry\n", tag)
+				if len(hybridComponents) > 0 {
+					fmt.Printf("created style hybrid %q (of %s) and forced it into the registry\n", tag, strings.Join(hybridComponents, ", "))
+				} else {
+					fmt.Printf("forced a new style %q into the registry\n", tag)
+				}
 			} else {
 				fmt.Printf("forcing existing style %q\n", tag)
 			}
@@ -1077,7 +1179,8 @@ func runPromptOVerseAdd(args []string) int {
 	for _, st := range selected {
 		item := queueItem{
 			Subject: subject, StyleLabel: st.Label, EnqueuedAt: now,
-			Forced: forcedLabel != "" && st.Label == forcedLabel,
+			Forced:          forcedLabel != "" && st.Label == forcedLabel,
+			AnnotationAlias: annotationAlias,
 		}
 		if item.Forced {
 			frontItems = append(frontItems, item)
@@ -1201,6 +1304,20 @@ func drainQueue(cfg *config.Config, force, slow bool) int {
 	}
 	pool := combinedStylePool(discovered)
 
+	// hybridComponentsByLabel resolves a style label to the style labels it
+	// was blended from (see ComponentStyles' doc comment), so drainQueue
+	// can stamp a "style_hybrid_of" tag on the published node -- reusing
+	// the node's existing generic Tags map/table rather than adding a new
+	// column/endpoint, per the founder's own steer ("you can fake it in
+	// the data and present the mashups [hybrids] in the site if thats
+	// better").
+	hybridComponentsByLabel := make(map[string][]string, len(discovered))
+	for _, ds := range discovered {
+		if len(ds.ComponentStyles) > 0 {
+			hybridComponentsByLabel[ds.Label] = ds.ComponentStyles
+		}
+	}
+
 	client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
 	if cfg.IDUNAAgentSecret == "" {
 		fmt.Fprintln(os.Stderr, "error: IDUNA_AGENT_SECRET not set and not found in secrets file (need EMILY-PRIME's, which has promptoverse.write)")
@@ -1227,6 +1344,11 @@ func drainQueue(cfg *config.Config, force, slow bool) int {
 
 		fmt.Fprintf(os.Stderr, "generating %s x %s...\n", st.Label, it.Subject)
 		prompt := st.Prompt(it.Subject)
+		// Subject-level annotation, if any, is appended to the real
+		// generation prompt only -- the EZ prompt built below from
+		// st.Label+it.Subject never sees it, so the taxonomy/gallery-facing
+		// subject stays exactly "Paimon" (see promptoverse_annotations.go).
+		prompt = annotatePrompt(cfg, it.Subject, it.AnnotationAlias, prompt)
 		img, err := vertexGenerateImage(token, prompt)
 		if err != nil {
 			if errors.Is(err, errVertexContentBlocked) {
@@ -1285,6 +1407,16 @@ func drainQueue(cfg *config.Config, force, slow bool) int {
 		}
 
 		slug := fmt.Sprintf("%s-%s", slugifyPO(it.Subject), slugifyPO(st.Label))
+		tags := map[string]string{"style": st.Label, "subject": it.Subject}
+		if components, isHybrid := hybridComponentsByLabel[st.Label]; isHybrid {
+			// Distinct vocabulary from mashup_nominations (subject+subject):
+			// this is a style hybrid (style+style) -- founder: "hybrid is a
+			// dual subject mashup is a dual style" -> confirmed the other
+			// way: mashup=subjects (existing feature), hybrid=styles (this
+			// one). Rendered on the site for free via the existing generic
+			// Tags table (render.go), no schema/endpoint change needed.
+			tags["style_hybrid_of"] = strings.Join(components, ", ")
+		}
 		node := iduna.PromptOVerseNode{
 			Slug:           slug,
 			Label:          st.Label,
@@ -1293,7 +1425,7 @@ func drainQueue(cfg *config.Config, force, slow bool) int {
 			EZPrompt:       fmt.Sprintf("%s %s", st.Label, it.Subject),
 			ExpandedPrompt: prompt,
 			ImageBase64:    base64.StdEncoding.EncodeToString(img),
-			Tags:           map[string]string{"style": st.Label, "subject": it.Subject},
+			Tags:           tags,
 		}
 		url, err := client.PostPromptOVerseNode(node)
 		if err != nil {
@@ -1525,8 +1657,22 @@ func slugifyPO(s string) string {
 		case r == ' ' || r == '-' || r == '_':
 			b.WriteRune('-')
 		}
+		// Any other rune (punctuation like "×", "&", accents, ...) is
+		// dropped silently. That's fine when it sits directly between two
+		// letters ("Master Chief (Halo)" -> "master-chief-halo"), but a
+		// dropped rune surrounded by spaces on both sides -- e.g. the "×"
+		// in a hybrid style label like "kawaii × FFXI" -- otherwise leaves
+		// a double hyphen behind (IDUNA's slug endpoint 400s on
+		// "medusa-kawaii--ffxi": found live 2026-08-18 generating that
+		// exact hybrid). Collapsed and trimmed below rather than only
+		// special-cased for "×", so any future punctuation-bearing
+		// subject/style is safe the same way.
 	}
-	return b.String()
+	slug := b.String()
+	for strings.Contains(slug, "--") {
+		slug = strings.ReplaceAll(slug, "--", "-")
+	}
+	return strings.Trim(slug, "-")
 }
 
 func trimMsgPO(b []byte) string {

@@ -51,6 +51,20 @@ type discoveredStyle struct {
 	// promptoverseRareStyles, just for anything promoted or discovered
 	// after the fact rather than hardcoded at build time.
 	Rare bool `json:"rare,omitempty"`
+	// ComponentStyles marks this style as a HYBRID of two or more existing
+	// style labels (e.g. ["kawaii", "FFXI"]) rather than a style invented
+	// from scratch -- founder, real-time: "add Medusa --tag kawaii --tag
+	// FFXI" / "it can be created and then when we double tag it in our
+	// system we know its a hybrid" / "i mean its a style mashup" ->
+	// "mashups vs hybrids" -> deliberately named "hybrid" here, distinct
+	// from the existing subject+subject "mashup_nominations" feature
+	// ("ok we have to make this a new vocab distinction"): mashup = two
+	// SUBJECTS combined, hybrid = two STYLES combined. Set when `add` is
+	// given more than one --tag: the tags are joined into one new combined
+	// style label (expanded the same way any single --tag style is)
+	// rather than producing N separate generations. Empty for every
+	// ordinary, non-hybrid style.
+	ComponentStyles []string `json:"component_styles,omitempty"`
 }
 
 func discoveredStylesPath(cfg *config.Config) string {
