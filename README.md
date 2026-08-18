@@ -161,7 +161,9 @@ emily key unset NAME
 ### Prompt-o-verse — generate + publish gallery nodes
 
 ```bash
-emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]   # queue <count> styles, then drain
+emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]...
+                       [--annotation "text" | --annotation-from-lore] [--annotation-alias NAME]
+                                                      # queue <count> styles, then drain
 emily promptoverse work [--force] [--slow]           # drain whatever's already queued (resume after a 429)
 emily promptoverse queue                             # list pending queue entries, oldest first
 emily promptoverse requeue                           # re-pick styles for everything still queued (skips --tag-forced items)
@@ -169,7 +171,28 @@ emily promptoverse styles                            # list the reusable style r
 emily promptoverse brainstorm [--target styles|subjects] [--seed "a, b, c"] [--sample N]   # prompt GPT-2 for candidates
 emily promptoverse promote <label> [--rare]          # turn a candidate/name into a real persisted style
 emily promptoverse promote-subject <label> [--rare]  # turn a candidate/name into a real known subject
+emily promptoverse mashups [--target subjects|styles] [--provider gemini|claude|all]  # LLM-judge genuine subject+subject mashups
+emily promptoverse regenerate <slug> --note "..."    # additive "regenerate with variation" -- new variant, same leaf page, never overwrites
+emily promptoverse annotations [set|clear] ...       # manage subject-level prompt annotations
+emily promptoverse backfill-annotation <subject>     # mark already-published nodes as pre-annotation
 ```
+
+**Style hybrids** — passing `--tag` more than once does *not* force N separate generations. It
+combines the tags into **one new blended style** instead (`emily promptoverse add Medusa --tag
+kawaii --tag FFXI` creates one "kawaii × FFXI" style and generates exactly one Medusa image in it,
+tagged `style_hybrid_of="kawaii, FFXI"` on the published node — visible via the same generic tag
+table every node already renders). This is deliberately named "hybrid," not "mashup" — `mashups`
+above already means two *subjects* combined; a hybrid combines two *styles*.
+
+**Subject annotations** — for a subject whose bare name collides with real third-party IP (e.g.
+"Paimon": TYLER's own Goetia-king hero vs. Genshin Impact's companion character, which risked
+erroneous content-policy blocks), an annotation sticks to the *subject* and is appended only to the
+real generation prompt sent to Vertex AI — never to the EZ prompt, taxonomy, or slug, which all
+stay exactly "Paimon" forever. `--annotation-from-lore` auto-derives disambiguating text from
+TYLER's hero compendium (`multiverse_heroes.md`) + its Goetia frequency table. A subject can carry
+more than one named alias (`emily promptoverse annotations set Paimon --alias genshin-impact
+--text "..."`), selectable per batch via `--annotation-alias` without ever forking the subject.
+`backfill-annotation <subject>` retroactively marks nodes published before an annotation existed.
 
 Requests are queued FIFO to a durable file (`EMILY/var/promptoverse-queue.jsonl`), not fired
 immediately — `add` enqueues then drains; if a drain is already mid-flight or queued, new
@@ -307,6 +330,29 @@ emily vault init
 emily vault unlock / lock / status
 emily vault add <name> / get <name> / list / delete <name>
 ```
+
+### Backup — cloud archive for IDUNA / Prompt-o-verse / fatbaby data
+
+```bash
+emily backup run                          # archive + upload all targets to GCS
+emily backup run --target iduna           # iduna | promptoverse | fatbaby | all
+emily backup decrypt <encrypted-file> <output-file>
+```
+
+Tars an allowlisted set of paths per target and uploads via `gcloud storage cp` to
+`gs://project-d24a71e9-2daf-4b2d-917-backups` (us-central1, 30-day retention lifecycle):
+
+| Target | Paths | Encrypted? |
+|---|---|---|
+| `iduna` | IDUNA's SQLite stores (`var/*.db` — auth, Apples, blog/tyler, promptoverse gallery DB, vault, mailing list) | Yes, AES-256-GCM |
+| `promptoverse` | Rendered gallery (images + HTML) + JSON state (queue, discovered styles/subjects, candidates, dead-letters, pity, backoff) | No |
+| `fatbaby` | Curated cross-repo state (`BACKLOG.md`, `EMILY/var`, `PRRJECT_FATBABY/var`) | No |
+
+The `iduna` target's AES-256-GCM key lives at `IDUNA_ROOT/var/backup-encryption.key` (0600,
+generated on first use) and is **never uploaded alongside the backups it protects** — losing that
+file makes every existing encrypted IDUNA backup permanently unrecoverable. Back it up yourself,
+somewhere else (password manager, a second machine) — this tool cannot do that part for you.
+`*.env`/credentials are deliberately excluded from every target, even encrypted ones.
 
 ### Memory — Emily Prime's observation digest
 
@@ -477,7 +523,7 @@ go test ./...                   # unit tests only
 EMILY_COLOR=1 go test ./internal/color/...  # color-mode tests
 ```
 
-Tests: 109 across 5 packages (`cmd`, `internal/config`, `internal/iduna`, `internal/obs`, `internal/color`).
+Tests: 236 across 5 packages (`cmd`, `internal/config`, `internal/iduna`, `internal/obs`, `internal/color`).
 
 ---
 

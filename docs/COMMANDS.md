@@ -665,6 +665,39 @@ Requires the subject to already have a stored annotation (`annotations set` firs
 
 ---
 
+## emily backup
+
+```
+emily backup run [--target iduna|promptoverse|fatbaby|all]
+emily backup decrypt <encrypted-file> <output-file>
+```
+
+Cloud backup for IDUNA / Prompt-o-verse / fatbaby data. Tars an allowlisted set of paths per
+target and uploads via `gcloud storage cp` to `gs://project-d24a71e9-2daf-4b2d-917-backups`
+(us-central1, 30-day retention lifecycle). Requires `gcloud` on `PATH`.
+
+| Target | Paths | Encrypted? |
+|---|---|---|
+| `iduna` | IDUNA's SQLite stores (`var/*.db`) | Yes — AES-256-GCM |
+| `promptoverse` | Rendered gallery (images + HTML) + JSON state | No |
+| `fatbaby` | Curated cross-repo state (`BACKLOG.md`, `EMILY/var`, `PRRJECT_FATBABY/var`) | No |
+
+The `iduna` target's encryption key lives at `IDUNA_ROOT/var/backup-encryption.key` (0600,
+generated on first use) and is never uploaded alongside the backups it protects — back it up
+yourself, elsewhere; losing it makes existing encrypted backups permanently unrecoverable.
+`*.env`/credentials are excluded from every target regardless of encryption.
+
+### Examples
+
+```bash
+emily backup run                         # all three targets
+emily backup run --target iduna          # just the encrypted IDUNA target
+emily backup decrypt iduna-143022.tar.gz.enc iduna-143022.tar.gz
+tar xzf iduna-143022.tar.gz
+```
+
+---
+
 ## Environment Variables
 
 | Variable | Default | Purpose |
