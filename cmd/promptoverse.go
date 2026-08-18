@@ -1113,13 +1113,18 @@ func drainQueue(cfg *config.Config, force, slow bool) int {
 				fmt.Fprintf(os.Stderr, "  SKIPPED (content policy): %s x %s -- %v\n", st.Label, it.Subject, err)
 				var cbErr *contentBlockedError
 				if errors.As(err, &cbErr) {
+					dlPath := deadLetterPath(cfg)
 					entry := deadLetterEntry{
 						Subject: it.Subject, StyleLabel: st.Label,
 						Reason: cbErr.Reason, Message: cbErr.Message, BlockedAt: time.Now().UTC(),
 					}
-					if err := appendDeadLetter(deadLetterPath(cfg), entry); err != nil {
-						fmt.Fprintf(os.Stderr, "warning: failed to record dead-letter entry: %v\n", err)
+					if err := appendDeadLetter(dlPath, entry); err != nil {
+						fmt.Fprintf(os.Stderr, "  WARNING: failed to record dead-letter entry to %s: %v\n", dlPath, err)
+					} else {
+						fmt.Fprintf(os.Stderr, "  recorded to dead-letter dataset: %s\n", dlPath)
 					}
+				} else {
+					fmt.Fprintf(os.Stderr, "  WARNING: content-blocked error was not the expected *contentBlockedError type -- not recorded to dead-letter dataset\n")
 				}
 				skipped++
 				items = items[1:]
