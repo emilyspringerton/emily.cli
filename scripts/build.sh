@@ -104,7 +104,16 @@ if [[ "$NO_INSTALL" != "true" ]]; then
   echo ""
   echo "  [3/3] install → $INSTALL_PATH"
   mkdir -p "$(dirname "$INSTALL_PATH")"
-  cp "$BINARY" "$INSTALL_PATH"
+  # cp into an already-running binary fails with ETXTBSY ("text file
+  # busy") -- a real recurring case now that promptoverse-mashups.timer
+  # (and other cron/systemd jobs) invoke `emily` on a schedule, not just a
+  # one-off fluke. Build to a temp file in the same directory, then mv:
+  # rename() repoints the directory entry to the new inode atomically
+  # without touching whatever inode a currently-running process still has
+  # open, so installs never block on (or get blocked by) a live invocation.
+  TMP_INSTALL="$INSTALL_PATH.new.$$"
+  cp "$BINARY" "$TMP_INSTALL"
+  mv "$TMP_INSTALL" "$INSTALL_PATH"
   echo "        installed: $("$INSTALL_PATH" --version)"
 fi
 

@@ -315,7 +315,9 @@ func promptoverseUsage() int {
 	fmt.Print(`emily promptoverse — generate + publish Prompt-o-verse gallery nodes
 
 Subcommands:
-  emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]   Queue <count> styles, then drain
+  emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]...
+                         [--annotation "text" | --annotation-from-lore] [--annotation-alias NAME]
+                                                        Queue <count> styles, then drain
   emily promptoverse work [--force] [--slow]           Drain whatever's already queued (e.g. resume after a 429)
   emily promptoverse queue                             List pending queue entries, oldest first
   emily promptoverse requeue                            Re-pick styles for everything still queued (skips --tag-forced items)
@@ -325,9 +327,14 @@ Subcommands:
   emily promptoverse promote <label> [--rare]           Turn a candidate/name into a real persisted style
   emily promptoverse promote-subject <label> [--rare]   Turn a candidate/name into a real known subject
   emily promptoverse mashups [--target subjects|styles] [--provider gemini|claude|all] [--subject <label>]
-                                LLM-judge which subjects/styles are genuine compositional mashups of
-                                others, or paraphrase-equivalent hybrids -- NOT string matching, see
+                                LLM-judge which subjects/styles are genuine compositional mashups
+                                (two SUBJECTS combined -- see "hybrid" below for two STYLES) or
+                                paraphrase-equivalent duplicates -- NOT string matching, see
                                 internal/mashupjudge and NORTHSTAR_PROMPT_O_VERSE.md §9 for why
+  emily promptoverse regenerate <slug> --note "..."     Additive "regenerate with variation" -- posts a
+                                                        new variant on the SAME leaf page, never overwrites
+  emily promptoverse annotations [list|set|clear] ...   Manage subject-level prompt annotations (see below)
+  emily promptoverse backfill-annotation <subject>      Mark already-published nodes as pre-annotation
 
 Example:
   emily promptoverse add ducks 6
@@ -340,6 +347,28 @@ Example:
     styles use, from every subject ever published (or discovered). Can
     also propose a brand new subject via Vertex AI, on a pity-adjusted
     chance, same as styles' spontaneous discovery.
+
+Style hybrids -- passing --tag more than once does NOT force N separate
+generations. It combines the tags into ONE new blended style ("hybrid",
+distinct from "mashup" above which combines two SUBJECTS not styles):
+  emily promptoverse add Medusa --tag kawaii --tag FFXI
+    Creates one "kawaii × FFXI" style (via Vertex AI, same as a single
+    --tag) and generates exactly one Medusa image in it -- not a kawaii
+    Medusa AND a separate FFXI Medusa. The published node is tagged
+    style_hybrid_of="kawaii, FFXI" (visible on its gallery page).
+
+Subject annotations -- for a subject whose bare name collides with real
+third-party IP (e.g. "Paimon": TYLER's own Goetia-king hero vs. Genshin
+Impact's companion character), an annotation sticks to the SUBJECT and is
+appended only to the real generation prompt sent to Vertex AI -- never to
+the EZ prompt, taxonomy, or slug, which all stay exactly "Paimon" forever:
+  emily promptoverse add Paimon --annotation-from-lore
+    Auto-derives disambiguating context from TYLER's hero compendium
+    (multiverse_heroes.md) + the Goetia frequency table, sets it as this
+    subject's default, and applies it to this batch.
+  emily promptoverse annotations set Paimon --alias genshin-impact --text "..."
+    Registers a second, non-default alias for deliberate one-off use via
+    --annotation-alias genshin-impact, without ever renaming the subject.
 
 Requests are queued FIFO to a durable file, not fired immediately -- if
 another 'add' is already mid-flight or queued, new requests wait their turn

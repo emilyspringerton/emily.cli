@@ -1,7 +1,7 @@
 # Emily CLI — Command Reference
 ## Full Specification for `emily` Binary
 
-*Last updated: 2026-06-07 — v0.5.0*
+*Last updated: 2026-08-18 — v1.0.0 (added `emily promptoverse` in full)*
 
 ---
 
@@ -434,6 +434,234 @@ emily prime-task --dry-run "preview without writing"
 # Multiple positional words are joined into the description
 emily prime-task improve the entity graph parser for suffix variants
 ```
+
+---
+
+## emily promptoverse
+
+Generate and publish nodes to the Prompt-o-verse gallery on okemily.com (real images via Vertex
+AI's `gemini-2.5-flash-image`, published through IDUNA's `promptoverse.write` API). Requires
+`gcloud` ADC already authenticated on this box, `IDUNA_AGENT_SECRET` for an agent with
+`promptoverse.write` (EMILY-PRIME has it), and `iduna.service` running.
+
+Requests are queued FIFO to a durable file (`EMILY_ROOT/var/promptoverse-queue.jsonl`), not fired
+immediately — `add` enqueues then drains; `work` just drains whatever's already queued (e.g. to
+resume after a rate limit without enqueueing anything new). Draining stops (doesn't retry forever)
+on a 429, leaving the remainder queued.
+
+### emily promptoverse add
+
+```
+emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]...
+                        [--annotation "text" | --annotation-from-lore] [--annotation-alias NAME]
+
+  <subject>                 What to generate (omit to auto-pick, weighted across every subject
+                             ever published/discovered, occasionally proposing a brand new one)
+  <count>                   How many styles to generate for this subject
+  --force                   Skip adaptive backoff wait for this run (bookkeeping still happens)
+  --slow                    Double every wait this command applies (base delay, growth, backoff)
+  --tag <style>              Force a specific style into this batch (created via Vertex AI if not
+                             already a known style). Repeatable — see "Style hybrids" below.
+  --annotation "text"        Set/overwrite this subject's default prompt annotation (see
+                             "Subject annotations" below)
+  --annotation-from-lore     Same, but auto-derived from TYLER's hero compendium instead of typed
+  --annotation-alias NAME    Use a specific stored annotation alias for this batch only, without
+                             changing the subject's default
+```
+
+#### Style hybrids (two or more `--tag` flags)
+
+Passing `--tag` more than once does **not** force N separate generations — it combines the tags
+into **one new blended style** ("style hybrid"), created (via Vertex AI, same as a single `--tag`)
+and applied once. This is how `emily promptoverse add Medusa --tag kawaii --tag FFXI` produced a
+single "kawaii × FFXI" style applied to Medusa, not two separate Medusa images.
+
+Vocabulary note: **"mashup"** already means something else in this codebase — two *subjects*
+combined (`emily promptoverse mashups`, the social nomination feature). A **"hybrid"** is two or
+more *styles* combined. Keeping these distinct avoids confusing which axis a given record is on.
+
+Internally: the combined tags are joined into one label (`"kawaii × FFXI"`), expanded through the
+same Vertex-AI style-template flow as any forced `--tag`, and the resulting `discoveredStyle`
+records which styles it was built from (`ComponentStyles`). The published node gets a
+`style_hybrid_of` tag (e.g. `"kawaii, FFXI"`) — visible on the gallery page via the same generic
+tag table every node already renders, no separate hybrid-specific page or endpoint.
+
+With no explicit `<count>`, a hybrid request defaults to exactly 1 (one blended generation); an
+explicit count forces the hybrid into one of that many slots, same as a single `--tag` would.
+
+#### Subject annotations (`--annotation`, `--annotation-from-lore`, `--annotation-alias`)
+
+Some subjects collide with real third-party IP under the same bare name (e.g. "Paimon" — TYLER's
+own Goetia-king hero vs. Genshin Impact's companion character), which can trigger erroneous
+content-policy blocks. Renaming the *subject* itself (e.g. "Paimon (demon)") is not the fix — it
+would fragment the EZ prompt/taxonomy, which must stay exactly "Paimon" everywhere. Instead, an
+**annotation** sticks to the subject itself and is appended only to the real generation prompt sent
+to Vertex AI — never to the EZ prompt, the taxonomy subject, or the slug.
+
+```bash
+# Hand-write the annotation text, make it this subject's default
+emily promptoverse add Paimon --annotation "this refers to Paimon, the Court Voice, a Goetia king..."
+
+# Auto-derive it instead, from TYLER/multiverse_heroes.md's matching hero entry
+# (hook + Field signature line from the Goetia frequency table)
+emily promptoverse add Paimon --annotation-from-lore
+```
+
+A subject can carry more than one *named* annotation (alias), one marked default. Manage them
+directly with `emily promptoverse annotations` (below); apply a non-default one to a single batch
+with `--annotation-alias NAME` without changing what the subject uses by default.
+
+#### Examples
+
+```bash
+emily promptoverse add ducks 6
+
+# Force one style into a 4-style batch; the other 3 fill via normal selection
+emily promptoverse add princess 4 --tag gladiator
+
+# Style hybrid: exactly one blended "kawaii × FFXI" generation
+emily promptoverse add Medusa --tag kawaii --tag FFXI
+
+# Auto-pick the subject, no --tag
+emily promptoverse add 6
+```
+
+---
+
+### emily promptoverse work
+
+```
+emily promptoverse work [--force] [--slow]
+```
+
+Drains whatever's already queued without enqueueing anything new — e.g. to resume after a rate
+limit stopped a previous `add`/`work` run. Same `--force`/`--slow` semantics as `add`.
+
+---
+
+### emily promptoverse queue
+
+```
+emily promptoverse queue
+```
+
+Lists pending queue entries, oldest first (`style x subject (queued <RFC3339>)`).
+
+---
+
+### emily promptoverse requeue
+
+```
+emily promptoverse requeue
+```
+
+Re-picks styles for everything still queued using the *current* marble-bag selection logic, skipping
+any `--tag`-forced item. Useful when the registry/usage has shifted since items were queued.
+
+---
+
+### emily promptoverse styles
+
+```
+emily promptoverse styles
+```
+
+Lists the reusable style registry (hardcoded + discovered).
+
+---
+
+### emily promptoverse brainstorm
+
+```
+emily promptoverse brainstorm [--target styles|subjects] [--seed "a, b, c"] [--sample N]
+                               [--max-tokens N] [--temperature F] [--via server|proxy|emily]
+```
+
+Prompts the GPT-2 fine-tune (gpt2-alpine-c) for style/subject candidates, seeded either explicitly
+(`--seed`) or from a random sample of `--sample` existing items. `--via` selects which endpoint
+serves the model (`server` :8088, `proxy` :8679, or `emily` :8086).
+
+---
+
+### emily promptoverse promote / promote-subject
+
+```
+emily promptoverse promote <label> [--rare]
+emily promptoverse promote-subject <label> [--rare]
+```
+
+Turns a candidate/free-text label into a real, persisted style (`promote`) or known subject
+(`promote-subject`) — `promote` expands it into a full style template via Vertex AI the same way a
+forced `--tag` does. `--rare` marks it as competing for a selection slot only occasionally rather
+than every run (see `promptoverse_pity.go`).
+
+---
+
+### emily promptoverse mashups
+
+```
+emily promptoverse mashups [--target subjects|styles] [--provider gemini|claude|all]
+                            [--subject <label>]
+```
+
+LLM-judges which subjects/styles in the registry are genuine compositional **mashups** (subject +
+subject; distinct from the "hybrid" style-combination concept documented under `add` above) or
+paraphrase-equivalent duplicates — a real judgment call, not string matching. See
+`internal/mashupjudge` and `NORTHSTAR_PROMPT_O_VERSE.md` §9.
+
+---
+
+### emily promptoverse regenerate
+
+```
+emily promptoverse regenerate <slug> --note "what should be different"
+```
+
+"Regenerate with variation" — e.g. a correction like "red hoodie instead of grey." **Additive, never
+an overwrite**: posts a new variant image via IDUNA's `.../nodes/{slug}/variants` endpoint,
+rendered alongside the original on the *same* leaf page (never a separate page, for SEO).
+
+---
+
+### emily promptoverse annotations
+
+```
+emily promptoverse annotations                                        # list every stored annotation
+emily promptoverse annotations set <subject> [--alias NAME]
+                                  [--text "..." | --from-lore] [--default]
+emily promptoverse annotations clear <subject> [--alias NAME]
+```
+
+Direct management of subject-level annotations (see `add`'s `--annotation*` flags above) without
+doing a generation at the same time. `--alias` names the entry (default alias name is `manual` for
+hand-written text, `tyler-lore` for `--from-lore`); `--default` makes it the subject's default even
+if another alias already holds that role. `clear` with no `--alias` removes every alias for the
+subject; with `--alias`, removes just that one (promoting another remaining alias to default if the
+one removed was it).
+
+```bash
+emily promptoverse annotations set Paimon --alias tyler-lore --default \
+  --text "this refers to Paimon, the Court Voice, a Goetia king from TYLER's hero compendium..."
+
+emily promptoverse annotations set Paimon --alias genshin-impact \
+  --text "deliberately invoking the Genshin Impact companion character..."
+
+emily promptoverse annotations clear Paimon --alias genshin-impact
+```
+
+---
+
+### emily promptoverse backfill-annotation
+
+```
+emily promptoverse backfill-annotation <subject> [--alias NAME]
+```
+
+Marks every already-published node for `<subject>` as pre-annotation, linked to the annotation now
+attached to that subject — for generations that existed before an annotation was set. Merges tags
+(`pre_annotation`, `annotation_subject`, `annotation_alias`) onto each matching node via IDUNA's
+`PATCH /api/v1/promptoverse/nodes/{slug}/tags`, without touching the node's image or prompt data.
+Requires the subject to already have a stored annotation (`annotations set` first).
 
 ---
 
