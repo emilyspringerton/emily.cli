@@ -362,6 +362,75 @@ emily help <any other command above>
 
 ---
 
+## Ontology
+
+Prompt-o-verse subject labels look like plain strings, but subject *identity* — whether two labels
+name "the same subject," and whether one subject is a genuine compositional mashup of others — is
+not a fixed lexical property of the string. It's context-dependent, and got tested against real
+examples (2026-08-18, founder real-time) while scoping mashup/hybrid discovery
+(`EMILY/docs/NORTHSTAR_PROMPT_O_VERSE.md` §9, `EMILY/BACKLOG.md` S176-29). Recorded here because
+it generalizes past that one feature — any future subject-comparison logic in this codebase should
+read this first, not re-derive it the hard way:
+
+- **Compositional ambiguity.** "tuxedo duck" is plausibly a real duck breed/color-morph name — a
+  single concept — not a mashup of "tuxedo" (clothing) and "duck" (animal), even though it's
+  lexically a subset of a broader "tuxedo duck" superstring. A subject containing another
+  subject's words is not proof it's *composed of* that subject.
+- **Paraphrase equivalence, and its limits.** "tuxedo duck" and "a duck wearing a tuxedo" are the
+  same subject despite sharing almost no words. "tuxedo duck" and "duck tuxedo" are *not* the same
+  subject despite sharing all their words, just reordered. Lexical similarity (shared words, word
+  order, edit distance) is neither necessary nor sufficient for subject equivalence.
+- **Definite vs. indefinite reference.** "a president wearing a tuxedo" is usually different from
+  "the president wearing a tuxedo" — the definite article can pin the subject to one specific
+  real-world referent, where the indefinite article (or no article) leaves it generic. This isn't
+  a stopword to normalize away; dropping it can silently merge two subjects that were never the
+  same thing.
+- **Stateless vs. stateful execution changes the right answer.** A stateless judgment — one
+  subject label in, one verdict out, no memory of anything else — cannot recover information a
+  stateful one has available: what else is in the current subject registry, what a subject was
+  intended to mean when it was generated, what's already been asked in the same session. Whether a
+  given piece of subject-identity logic is built stateless or stateful is a real design decision,
+  not an implementation detail — defaulting to stateless because it's simpler will get context-
+  dependent cases like the ones above wrong.
+- **Fixed points and zero points in time.** Some referents drift with real-world state: "the
+  president" resolves to a specific person *as of whenever the query is evaluated* — asking again
+  years later, after (for example) a different person becomes president, does not reasonably
+  render a similar response even though the label string hasn't changed. A subject's identity can
+  need a **fixed point** — an explicit anchor to the moment it was generated or intended — to stay
+  stable over time; without one, it has an implicit, un-anchored **zero point** (evaluate "now,"
+  whenever "now" happens to be) and will silently drift. Whether a given subject should be pinned
+  to a fixed point or left floating is a per-subject design choice, not a global default.
+
+The fixed-point/zero-point distinction matters most exactly where this section started: hybrid
+subject representation. A mashup like "Fractal Raccoon" is itself a compound referent, and whether
+*it* stays the same subject over time depends on the same anchoring question its components do —
+if "Fractal" or "Raccoon" independently drift (new discovered meaning, real-world referent change),
+does the hybrid drift with them, or was it meant to freeze at the moment it was composed? Not
+answered here; flagged as part of the same requirement, not a separate one.
+
+Real, already-live example of the same drift, one layer down: a Rapunzel + ice-cream-novelty-style
+query was blocked outright by Vertex AI's own content policy (`IMAGE_PROHIBITED_CONTENT`, recorded
+in the content-policy dead-letter dataset — S176-23, `EMILY/var/promptoverse-content-blocked.jsonl`).
+Founder: "thats a highly time context sensitive one [...] depending on the platform training [...]
+current trademarks etc." Whether a given subject is even *generatable* at all is itself a
+zero-point-evaluated judgment — it depends on the generation platform's training data and current
+trademark/IP state at query time, not a fixed property of the label "Rapunzel." The same subject
+could plausibly succeed or fail identical queries at different points in time for reasons that have
+nothing to do with the taxonomy and everything to do with an external, drifting fixed point.
+
+Everything above was worked out against *subjects*, but the same ambiguities are plausible for
+*styles*/tags too (paraphrase equivalence, compositional vs. coincidental overlap, drift over
+time) — worth naming so it isn't rediscovered from scratch later, but deliberately **not** scoped
+or built here. Deferred, same as the subject-side work.
+
+None of this is resolved into working code yet — it's exactly why the mashup/hybrid-discovery
+feature (`NORTHSTAR_PROMPT_O_VERSE.md` §9) was scoped and then explicitly deferred rather than
+shipped as a lexical string-matching rule. Any future attempt at automated subject comparison,
+dedup, or mashup detection should treat this section as the requirements it has to satisfy, not
+just prior art to skim.
+
+---
+
 ## Environment
 
 | Variable | Default | Purpose |
