@@ -214,7 +214,14 @@ func parseSubjectProposalJSON(text string, existingSubjects []string) (*discover
 // discovery, not just a shortfall fallback), and otherwise the existing
 // pool is picked via the same weighted "marble bag" as styles. Mutates
 // pity in place -- the caller persists it once, same as the style path.
-func pickSubject(cfg *config.Config, existing []iduna.PromptOVerseNodeSummary, rng *rand.Rand, pity *pityState) (string, error) {
+// pickSubject auto-picks one subject via the weighted "marble bag"
+// selection every subject-omitted `add` uses. extraExclude is additional
+// subjects to rule out beyond the usual rare-subject gate -- nil for the
+// normal single-pick path; used by the style-sweep path
+// (runPromptOVerseAddStyleSweep) to avoid re-picking a subject already
+// chosen earlier in the same sweep, or one that already has the locked
+// style published/queued.
+func pickSubject(cfg *config.Config, existing []iduna.PromptOVerseNodeSummary, rng *rand.Rand, pity *pityState, extraExclude map[string]bool) (string, error) {
 	discoveredPath := discoveredSubjectsPath(cfg)
 	discovered, err := loadDiscoveredSubjects(discoveredPath)
 	if err != nil {
@@ -230,6 +237,9 @@ func pickSubject(cfg *config.Config, existing []iduna.PromptOVerseNodeSummary, r
 	}
 
 	exclude := map[string]bool{}
+	for s := range extraExclude {
+		exclude[s] = true
+	}
 	if chanceTriggered(rng.Float64(), pityAdjustedChance(promptoverseRareStyleChance, pity.RareSubjectRunsSinceTrigger)) {
 		pity.RareSubjectRunsSinceTrigger = 0
 	} else {

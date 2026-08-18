@@ -99,8 +99,11 @@ func TestParseAddPositionalArgs_SubjectAloneWithoutTagIsStillAnError(t *testing.
 }
 
 func TestParseAddPositionalArgs_NumericSingleArgWithTagIsStillAutoSubjectCount(t *testing.T) {
-	// A numeric single arg with --tag set is unchanged: auto-pick subject,
-	// the number is the count, --tag forces one of the count slots.
+	// A numeric single arg with --tag set parses the same shape it always
+	// has (subject="", count=4, autoSubject=true) -- runPromptOVerseAdd is
+	// what changed what THIS shape means (style sweep: 4 different
+	// subjects locked to "gladiator", not 4 styles for one auto-picked
+	// subject), not the parser.
 	subject, count, auto, err := parseAddPositionalArgs([]string{"4"}, "gladiator")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

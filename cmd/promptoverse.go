@@ -934,6 +934,20 @@ func runPromptOVerseAdd(args []string) int {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
 	}
+
+	// No subject given, but a style IS forced: <count> means "how many
+	// DIFFERENT subjects, all in this one locked style" -- not "how many
+	// styles for one auto-picked subject" (the normal autoSubject
+	// meaning). Founder, real-time: "i need a way to force generations of
+	// a style like game sprite or pixel art if i dont specify a subject
+	// but do specify count and do set a tag all of the styles should lock
+	// to that style tag of the count specified." A style sweep like
+	// "generate 10 game sprites" is a different shape of request from
+	// "generate 10 styles of this one subject" and needs its own path.
+	if autoSubject && tag != "" {
+		return runPromptOVerseAddStyleSweep(cfg, tags, count, force, slow)
+	}
+
 	client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
 	existing, err := client.ListPromptOVerseNodes()
 	if err != nil {
@@ -950,7 +964,7 @@ func runPromptOVerseAdd(args []string) int {
 	}
 
 	if autoSubject {
-		picked, perr := pickSubject(cfg, existing, rng, &pity)
+		picked, perr := pickSubject(cfg, existing, rng, &pity, nil)
 		if perr != nil {
 			fmt.Fprintf(os.Stderr, "auto-pick subject: %v\n", perr)
 			return 1
