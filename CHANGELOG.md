@@ -1,3 +1,7 @@
+## 2026-08-18
+
+- feat(promptoverse): topic/subject discovery mirroring the entire style-discovery system (marble bag, rare tier, pity, Vertex AI discovery, GPT-2 brainstorm --target subjects, promote-subject). emily promptoverse add <count> (subject omitted) auto-picks via the same weighted selection styles use, or can propose a brand new subject via Vertex AI on a pity-adjusted chance (sess-20260813-2154-dda37e8b)
+
 ## 2026-08-17
 - fix(promptoverse): vertexGenerateImage now surfaces finishReason/finishMessage instead of a generic 'no image data in response' -- diagnosed a real live failure that looked like a broken API key but was actually Vertex's IMAGE_PROHIBITED_CONTENT filter blocking Rapunzel (Disney IP). New errVertexContentBlocked sentinel: drainQueue skips permanently-blocked items instead of jamming the queue behind them, same treatment as the earlier duplicate-entry fix. (sess-20260813-2154-dda37e8b)
 - feat(promptoverse): --slow flag doubles all inter-request/backoff waits for add and work (sess-20260813-2154-dda37e8b)
