@@ -273,6 +273,8 @@ func RunPromptOVerse(args []string) int {
 		return runPromptOVerseRequeue()
 	case "promote":
 		return runPromptOVersePromote(args[1:])
+	case "promote-subject":
+		return runPromptOVersePromoteSubject(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "emily promptoverse: unknown subcommand %q\n\n", args[0])
 		return promptoverseUsage()
@@ -283,14 +285,15 @@ func promptoverseUsage() int {
 	fmt.Print(`emily promptoverse — generate + publish Prompt-o-verse gallery nodes
 
 Subcommands:
-  emily promptoverse add <subject> <count> [--force] [--slow] [--tag <style>]   Queue <count> styles applied to <subject>, then drain
+  emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]   Queue <count> styles, then drain
   emily promptoverse work [--force] [--slow]           Drain whatever's already queued (e.g. resume after a 429)
   emily promptoverse queue                             List pending queue entries, oldest first
   emily promptoverse requeue                            Re-pick styles for everything still queued (skips --tag-forced items)
   emily promptoverse styles                            List the reusable style registry
-  emily promptoverse brainstorm [--seed "a, b, c"] [--sample N]   Prompt GPT-2 for candidate style tags
+  emily promptoverse brainstorm [--target styles|subjects] [--seed "a, b, c"] [--sample N]   Prompt GPT-2 for candidates
                                 [--max-tokens N] [--temperature F] [--via server|proxy|emily]
   emily promptoverse promote <label> [--rare]           Turn a candidate/name into a real persisted style
+  emily promptoverse promote-subject <label> [--rare]   Turn a candidate/name into a real known subject
 
 Example:
   emily promptoverse add ducks 6
@@ -298,6 +301,11 @@ Example:
     Forces "gladiator" as one of the 4 (creating it via Vertex AI if it's
     not already a known style), then fills the remaining 3 through the
     normal deduped/variety-weighted selection.
+  emily promptoverse add 6
+    No subject given -- auto-picks one via the same weighted "marble bag"
+    styles use, from every subject ever published (or discovered). Can
+    also propose a brand new subject via Vertex AI, on a pity-adjusted
+    chance, same as styles' spontaneous discovery.
 
 Requests are queued FIFO to a durable file, not fired immediately -- if
 another 'add' is already mid-flight or queued, new requests wait their turn
@@ -726,14 +734,25 @@ func runPromptOVerseAdd(args []string) int {
 	}
 	args = rest
 
-	if len(args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: emily promptoverse add <subject> <count> [--force] [--slow] [--tag <style>]")
+	// A bare <count> (1 positional arg) means "auto-pick the subject" --
+	// S176-24+: "copy all those same patterns for topic discovery." An
+	// explicit <subject> <count> (2 args) keeps the original behavior
+	// unchanged.
+	if len(args) != 1 && len(args) != 2 {
+		fmt.Fprintln(os.Stderr, "usage: emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]")
 		return 1
 	}
-	subject := strings.TrimSpace(args[0])
-	count, err := strconv.Atoi(args[1])
+	autoSubject := len(args) == 1
+	var subject, countArg string
+	if autoSubject {
+		countArg = args[0]
+	} else {
+		subject = strings.TrimSpace(args[0])
+		countArg = args[1]
+	}
+	count, err := strconv.Atoi(countArg)
 	if err != nil || count <= 0 {
-		fmt.Fprintf(os.Stderr, "emily promptoverse add: <count> must be a positive integer, got %q\n", args[1])
+		fmt.Fprintf(os.Stderr, "emily promptoverse add: <count> must be a positive integer, got %q\n", countArg)
 		return 1
 	}
 
@@ -747,6 +766,24 @@ func runPromptOVerseAdd(args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "list existing nodes (needed to dedupe): %v\n", err)
 		return 1
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	pityPath := pityStatePath(cfg)
+	pity, err := loadPityState(pityPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load pity state: %v\n", err)
+		return 1
+	}
+
+	if autoSubject {
+		picked, perr := pickSubject(cfg, existing, rng, &pity)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "auto-pick subject: %v\n", perr)
+			return 1
+		}
+		subject = picked
+		fmt.Printf("auto-picked subject: %q\n", subject)
 	}
 
 	discoveredPath := discoveredStylesPath(cfg)
@@ -788,14 +825,6 @@ func runPromptOVerseAdd(args []string) int {
 			exclude[it.StyleLabel] = true
 			subjectHasPriorGeneration = true
 		}
-	}
-
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-	pityPath := pityStatePath(cfg)
-	pity, err := loadPityState(pityPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "load pity state: %v\n", err)
-		return 1
 	}
 
 	// Rare styles (promptoverseRareStyles + discoveredStyle.Rare) are

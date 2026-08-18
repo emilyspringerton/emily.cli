@@ -24,9 +24,15 @@ const promptoverseCandidatesFileName = "promptoverse-candidate-tags.json"
 
 // candidateTag is one GPT-2-harvested candidate not yet promoted (or
 // already promoted -- Promoted stays true rather than deleting the
-// record, so the page can still show it as provenance/history).
+// record, so the page can still show it as provenance/history). Kind
+// distinguishes a style candidate from a subject candidate (S176-24+:
+// "copy all those same patterns for topic discovery") sharing this one
+// file/page section rather than needing a second parallel set of types --
+// empty Kind on an older record (written before this field existed) reads
+// as "style", the only kind that existed then.
 type candidateTag struct {
 	Label       string    `json:"label"`
+	Kind        string    `json:"kind"` // "style" | "subject"
 	Seed        string    `json:"seed"` // the seed prompt that produced it, truncated
 	HarvestedAt time.Time `json:"harvested_at"`
 	Promoted    bool      `json:"promoted,omitempty"`
@@ -77,14 +83,16 @@ func saveCandidates(path string, candidates []candidateTag) error {
 // (case-insensitive), skipping anything already in the live style pool.
 // Best-effort: a persistence failure here is a warning printed by the
 // caller, not a reason to fail the whole brainstorm run.
-func recordCandidates(path string, labels []string, seed string, existingPoolLabels map[string]bool) (added int, err error) {
+func recordCandidates(path string, kind string, labels []string, seed string, existingPoolLabels map[string]bool) (added int, err error) {
 	existing, err := loadCandidates(path)
 	if err != nil {
 		return 0, err
 	}
 	seen := make(map[string]bool, len(existing))
 	for _, c := range existing {
-		seen[strings.ToLower(c.Label)] = true
+		if candidateKind(c) == kind {
+			seen[strings.ToLower(c.Label)] = true
+		}
 	}
 	now := time.Now().UTC()
 	for _, label := range labels {
@@ -93,13 +101,22 @@ func recordCandidates(path string, labels []string, seed string, existingPoolLab
 			continue
 		}
 		seen[key] = true
-		existing = append(existing, candidateTag{Label: label, Seed: truncateForDisplay(seed, 200), HarvestedAt: now})
+		existing = append(existing, candidateTag{Label: label, Kind: kind, Seed: truncateForDisplay(seed, 200), HarvestedAt: now})
 		added++
 	}
 	if added == 0 {
 		return 0, nil
 	}
 	return added, saveCandidates(path, existing)
+}
+
+// candidateKind reads c.Kind, treating an empty value (records written
+// before Kind existed) as "style" -- the only kind that existed then.
+func candidateKind(c candidateTag) string {
+	if c.Kind == "" {
+		return "style"
+	}
+	return c.Kind
 }
 
 func runPromptOVersePromote(args []string) int {
@@ -161,7 +178,7 @@ func runPromptOVersePromote(args []string) int {
 	if candidates, err := loadCandidates(candPath); err == nil {
 		changed := false
 		for i := range candidates {
-			if strings.EqualFold(candidates[i].Label, label) && !candidates[i].Promoted {
+			if candidateKind(candidates[i]) == "style" && strings.EqualFold(candidates[i].Label, label) && !candidates[i].Promoted {
 				candidates[i].Promoted = true
 				changed = true
 			}

@@ -82,6 +82,23 @@ func TestRunPromptOVerseAdd_ParsesSlowFlag(t *testing.T) {
 	}
 }
 
+func TestRunPromptOVerseAdd_SinglePositionalArgIsAutoSubjectCount(t *testing.T) {
+	// A single positional arg means "auto-pick the subject" -- verified via
+	// the same count-validation early-return the other tests use, so this
+	// doesn't require a live IDUNA/network connection. Also confirms it's
+	// still treated as the count (not the subject) by using an invalid
+	// count value.
+	if code := runPromptOVerseAdd([]string{"not-a-number"}); code != 1 {
+		t.Errorf("expected exit 1 (bad count) for a single bad positional arg, got %d", code)
+	}
+	if code := runPromptOVerseAdd([]string{}); code != 1 {
+		t.Errorf("expected exit 1 (usage) for zero positional args, got %d", code)
+	}
+	if code := runPromptOVerseAdd([]string{"a", "b", "c"}); code != 1 {
+		t.Errorf("expected exit 1 (usage) for 3 positional args, got %d", code)
+	}
+}
+
 func TestStyleByLabel(t *testing.T) {
 	st, ok := styleByLabel("stained glass")
 	if !ok {

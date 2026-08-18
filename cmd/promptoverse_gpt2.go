@@ -38,16 +38,22 @@ import (
 	"time"
 
 	"github.com/emilyspringerton/emily-cli/internal/config"
+	"github.com/emilyspringerton/emily-cli/internal/iduna"
 )
 
 func runPromptOVerseBrainstorm(args []string) int {
 	fs := flag.NewFlagSet("promptoverse brainstorm", flag.ContinueOnError)
-	seed := fs.String("seed", "", "comma-separated seed style list (default: a random sample of the registry, see --sample)")
-	sampleN := fs.Int("sample", 5, "how many existing styles to randomly sample as the seed when --seed isn't given")
+	target := fs.String("target", "styles", "what to brainstorm: styles | subjects")
+	seed := fs.String("seed", "", "comma-separated seed list (default: a random sample, see --sample)")
+	sampleN := fs.Int("sample", 5, "how many existing items to randomly sample as the seed when --seed isn't given")
 	maxTokens := fs.Int("max-tokens", 60, "tokens to generate")
 	temperature := fs.Float64("temperature", 0.9, "sampling temperature -- 0.9 empirically kept the base model in list-continuation mode longer than 0.7")
 	via := fs.String("via", "server", "endpoint: server (:8088) | proxy (:8679) | emily (:8086)")
 	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if *target != "styles" && *target != "subjects" {
+		fmt.Fprintf(os.Stderr, "emily promptoverse brainstorm: --target must be \"styles\" or \"subjects\", got %q\n", *target)
 		return 1
 	}
 
@@ -56,34 +62,54 @@ func runPromptOVerseBrainstorm(args []string) int {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		return 1
 	}
-	discovered, err := loadDiscoveredStyles(discoveredStylesPath(cfg))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "load discovered styles: %v\n", err)
-		return 1
+
+	// existingLabels is what the seed samples from AND what parsed
+	// candidates get checked against for "already known" -- styles vs
+	// subjects have different sources (styles: the compiled registry +
+	// discovered; subjects: real published usage + discovered, no
+	// hardcoded list the way styles need one).
+	var existingLabels []string
+	switch *target {
+	case "styles":
+		discovered, derr := loadDiscoveredStyles(discoveredStylesPath(cfg))
+		if derr != nil {
+			fmt.Fprintf(os.Stderr, "load discovered styles: %v\n", derr)
+			return 1
+		}
+		for _, st := range combinedStylePool(discovered) {
+			existingLabels = append(existingLabels, st.Label)
+		}
+	case "subjects":
+		client := iduna.New(cfg.IDUNABaseURL, cfg.IDUNAAgentName, cfg.IDUNAAgentSecret)
+		nodes, lerr := client.ListPromptOVerseNodes()
+		if lerr != nil {
+			fmt.Fprintf(os.Stderr, "list existing nodes: %v\n", lerr)
+			return 1
+		}
+		discovered, derr := loadDiscoveredSubjects(discoveredSubjectsPath(cfg))
+		if derr != nil {
+			fmt.Fprintf(os.Stderr, "load discovered subjects: %v\n", derr)
+			return 1
+		}
+		existingLabels = subjectPool(nodes, discovered)
 	}
-	pool := combinedStylePool(discovered)
 
 	seedList := strings.TrimSpace(*seed)
 	if seedList == "" {
-		// A random SAMPLE, not the full registry every time -- founder:
-		// "when i told you about it i gave you an example prompt but we
-		// can have any number of 4 [or so] prompts we already have as
-		// styles as a perturbation for gpt2 to start spitting out data."
-		// Different subsets nudge completions in different directions
-		// instead of the same always-full seed producing similar output
-		// run after run.
-		labels := make([]string, 0, len(pool))
-		for _, st := range pool {
-			labels = append(labels, st.Label)
-		}
-		seedList = strings.Join(sampleLabels(labels, *sampleN, rand.New(rand.NewSource(time.Now().UnixNano()))), ", ")
+		// A random SAMPLE, not the full pool every time -- founder: "when i
+		// told you about it i gave you an example prompt but we can have
+		// any number of 4 [or so] prompts we already have as styles as a
+		// perturbation for gpt2 to start spitting out data." Different
+		// subsets nudge completions in different directions instead of the
+		// same always-full seed producing similar output run after run.
+		seedList = strings.Join(sampleLabels(existingLabels, *sampleN, rand.New(rand.NewSource(time.Now().UnixNano()))), ", ")
 	}
 	// Trailing ", " (not just ",") is what actually kept the base model in
 	// list-continuation mode in live testing -- without the space it tended
 	// to drift into prose immediately.
 	prompt := seedList + ", "
 
-	fmt.Printf("prompt (%s): %q\n\n", *via, truncateForDisplay(prompt, 200))
+	fmt.Printf("target: %s\nprompt (%s): %q\n\n", *target, *via, truncateForDisplay(prompt, 200))
 
 	text, model, err := gpt2GenerateRaw(*via, prompt, *maxTokens, *temperature)
 	if err != nil {
@@ -94,10 +120,10 @@ func runPromptOVerseBrainstorm(args []string) int {
 
 	fmt.Printf("model: %s\nraw completion:\n  %s\n\n", model, text)
 
-	candidates := parseStyleTags(text)
-	existing := make(map[string]bool, len(pool))
-	for _, st := range pool {
-		existing[strings.ToLower(st.Label)] = true
+	candidates := parseStyleTags(text) // parser is generic (comma/newline list cleanup), reused as-is for subjects
+	existing := make(map[string]bool, len(existingLabels))
+	for _, l := range existingLabels {
+		existing[strings.ToLower(l)] = true
 	}
 
 	if len(candidates) == 0 {
@@ -105,23 +131,32 @@ func runPromptOVerseBrainstorm(args []string) int {
 		return 0
 	}
 
-	fmt.Println("parsed candidate tags:")
+	promoteHint := "emily promptoverse promote <label>"
+	if *target == "subjects" {
+		promoteHint = "emily promptoverse promote-subject <label>"
+	}
+
+	fmt.Printf("parsed candidate %s:\n", *target)
 	newCount := 0
 	for _, c := range candidates {
 		if existing[strings.ToLower(c)] {
-			fmt.Printf("  - %s (already in registry)\n", c)
+			fmt.Printf("  - %s (already known)\n", c)
 			continue
 		}
 		newCount++
 		fmt.Printf("  - %s\n", c)
 	}
-	fmt.Printf("\n%d candidate(s) parsed, %d not already in the registry.\n", len(candidates), newCount)
+	fmt.Printf("\n%d candidate(s) parsed, %d not already known.\n", len(candidates), newCount)
 
-	added, recErr := recordCandidates(candidatesPath(cfg), candidates, seedList, existing)
+	kind := "style"
+	if *target == "subjects" {
+		kind = "subject"
+	}
+	added, recErr := recordCandidates(candidatesPath(cfg), kind, candidates, seedList, existing)
 	if recErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to persist candidate tags: %v\n", recErr)
+		fmt.Fprintf(os.Stderr, "warning: failed to persist candidate %s: %v\n", *target, recErr)
 	} else if added > 0 {
-		fmt.Printf("saved %d new candidate(s) for later review: emily promptoverse promote <label>\n", added)
+		fmt.Printf("saved %d new candidate(s) for later review: %s\n", added, promoteHint)
 	}
 	fmt.Println("Nothing added automatically -- promote anything worth keeping with `emily promptoverse promote <label> [--rare]`.")
 	return 0

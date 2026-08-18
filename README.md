@@ -161,13 +161,14 @@ emily key unset NAME
 ### Prompt-o-verse — generate + publish gallery nodes
 
 ```bash
-emily promptoverse add <subject> <count> [--force] [--slow] [--tag <style>]   # queue <count> styles, then drain
+emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]   # queue <count> styles, then drain
 emily promptoverse work [--force] [--slow]           # drain whatever's already queued (resume after a 429)
 emily promptoverse queue                             # list pending queue entries, oldest first
 emily promptoverse requeue                           # re-pick styles for everything still queued (skips --tag-forced items)
 emily promptoverse styles                            # list the reusable style registry
-emily promptoverse brainstorm [--seed "a, b, c"] [--sample N]   # prompt GPT-2 for candidate style tags
+emily promptoverse brainstorm [--target styles|subjects] [--seed "a, b, c"] [--sample N]   # prompt GPT-2 for candidates
 emily promptoverse promote <label> [--rare]          # turn a candidate/name into a real persisted style
+emily promptoverse promote-subject <label> [--rare]  # turn a candidate/name into a real known subject
 ```
 
 Requests are queued FIFO to a durable file (`EMILY/var/promptoverse-queue.jsonl`), not fired
@@ -245,6 +246,24 @@ exist yet, just invoked directly instead of as a side effect of `add`. `--rare` 
 same "sometimes, not always" treatment as the hardcoded rare tier. Matching candidate records get
 marked promoted rather than deleted, so there's a durable trail of what came from brainstorm and
 what happened to it.
+
+**Subject/topic discovery** mirrors the entire style system above, applied to *subjects* instead —
+one real difference: a subject is just a string (no Kind/Template to author), so there's no
+hardcoded starter list the way styles needed one; the pool is every subject any published node has
+ever used, plus anything discovered/promoted since.
+
+- `emily promptoverse add <count>` (subject omitted) auto-picks one via the same weighted "marble
+  bag" as styles — under-used subjects more likely, never guaranteed — and can also propose a
+  brand new subject via Vertex AI on a pity-adjusted chance, exactly like styles' spontaneous
+  discovery, even when the pool already has candidates.
+- Subjects marked rare (via `promote-subject --rare`) are excluded by default with the same
+  pity-adjusted group roll rare styles get.
+- `emily promptoverse brainstorm --target subjects` seeds GPT-2 from a random sample of real used
+  subjects instead of styles, saving candidates (`Kind: "subject"`) to the same
+  `promptoverse-candidate-tags.json` file styles use (deduped independently per kind, so a style
+  and a subject can share a literal name without colliding).
+- `emily promptoverse promote-subject <label> [--rare]` turns a candidate/name into a real known
+  subject, persisted to `EMILY/var/promptoverse-discovered-subjects.json`.
 
 ### Context / Northstar — golden-doc tooling
 

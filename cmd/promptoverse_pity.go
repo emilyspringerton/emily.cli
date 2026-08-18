@@ -49,6 +49,13 @@ const (
 type pityState struct {
 	RareStyleRunsSinceTrigger int `json:"rare_style_runs_since_trigger"`
 	DiscoveryRunsSinceTrigger int `json:"discovery_runs_since_trigger"`
+	// RareSubjectRunsSinceTrigger / NewSubjectRunsSinceTrigger mirror the
+	// two style counters above, for subject auto-pick (S176-24+: "copy all
+	// those same patterns for topic discovery"). Separate counters, not
+	// shared with the style ones -- a drought on styles finding something
+	// new says nothing about whether subjects are also in a drought.
+	RareSubjectRunsSinceTrigger int `json:"rare_subject_runs_since_trigger"`
+	NewSubjectRunsSinceTrigger  int `json:"new_subject_runs_since_trigger"`
 }
 
 func pityStatePath(cfg *config.Config) string {
