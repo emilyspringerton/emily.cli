@@ -96,7 +96,29 @@ type style struct {
 	Prompt func(subject string) string
 }
 
+// promptoverseSpriteStyleLabel marks a style as sprite-generation output --
+// checked by drainQueue right after generation, before upload, to run the
+// chroma-key background-removal post-process. Founder, real-time: "feel
+// free to create a whole sprite generation subsystem for promptoverse if
+// that helps" (offered while building BRAWLPIT's first 4 pixel-art
+// characters, whose source images were honest-but-imperfect full scenes --
+// a moon, a beach -- not clean game-ready portraits). This is that
+// subsystem's first real style: request a background this pipeline can
+// reliably strip out programmatically, rather than trying to prompt for
+// "transparent" (image models don't reliably produce real alpha) or
+// attempting ML-based background segmentation (a much bigger, separate
+// undertaking than a one-session addition).
+const promptoverseSpriteStyleLabel = "game sprite"
+const promptoverseSpriteChromaKeyHex = "#00FF00"
+
 var promptoverseStyles = []style{
+	{promptoverseSpriteStyleLabel, "surreal", func(s string) string {
+		return fmt.Sprintf("A full-body character portrait of %s, centered, facing forward, "+
+			"standing in a neutral idle pose, video-game-sprite proportions, clean bold outlines, "+
+			"flat cel-shaded coloring -- on a SOLID PURE GREEN chroma-key background (%s), "+
+			"absolutely no scenery, no props, no shadows on the background, no gradient, no texture "+
+			"behind the character, only flat solid green fills the entire background.", s, promptoverseSpriteChromaKeyHex)
+	}},
 	{"1910s tobacco card", "historical", func(s string) string {
 		return fmt.Sprintf("A portrait of %s, rendered as a vintage 1910s tobacco baseball card -- "+
 			"sepia-toned hand-tinted lithograph illustration style, ornate Victorian card border, "+
@@ -1249,6 +1271,19 @@ func drainQueue(cfg *config.Config, force, slow bool) int {
 		}
 		clearBackoffState(backoffPath)
 
+		if st.Label == promptoverseSpriteStyleLabel {
+			stripped, serr := stripChromaKeyBackground(img)
+			if serr != nil {
+				// Don't fail the whole drain over a post-processing step --
+				// publish the flat-green original rather than lose a real,
+				// already-paid-for generation; the SOLID-GREEN negative
+				// constraints in the prompt itself keep this a rare path.
+				fmt.Fprintf(os.Stderr, "  WARNING: chroma-key background removal failed, publishing with green background intact: %v\n", serr)
+			} else {
+				img = stripped
+			}
+		}
+
 		slug := fmt.Sprintf("%s-%s", slugifyPO(it.Subject), slugifyPO(st.Label))
 		node := iduna.PromptOVerseNode{
 			Slug:           slug,
@@ -1337,6 +1372,30 @@ func gcloudAccessToken() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// stripChromaKeyBackground turns the flat-green background a "game
+// sprite"-style generation asks for into real alpha transparency, via
+// ImageMagick's `convert` -- the same real, already-proven dependency
+// the thumbnail pipeline (cmd/promptoverse-thumbnails) uses, piped
+// stdin-to-stdout so no temp files are needed. -fuzz tolerates the
+// slight color variance real generations have around a nominally-solid
+// green fill; too low and edge pixels stay opaque green fringing, too
+// high and it eats into the character's own green-adjacent colors, so
+// 12% is a real tested middle, not a guess.
+func stripChromaKeyBackground(pngBytes []byte) ([]byte, error) {
+	cmd := exec.Command("convert", "-", "-fuzz", "12%", "-transparent", promptoverseSpriteChromaKeyHex, "-")
+	cmd.Stdin = bytes.NewReader(pngBytes)
+	var out, stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("chroma-key background removal: %w: %s", err, stderr.String())
+	}
+	if out.Len() == 0 {
+		return nil, fmt.Errorf("chroma-key background removal produced no output")
+	}
+	return out.Bytes(), nil
 }
 
 func vertexGenerateImage(token, prompt string) ([]byte, error) {
