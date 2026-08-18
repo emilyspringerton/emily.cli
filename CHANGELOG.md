@@ -1,4 +1,5 @@
 ## 2026-08-18
+- Fixed vertexTextGenerate's 30s HTTP timeout (bumped to 90s) causing silent failures when creating new forced/hybrid Prompt-o-verse styles (sess-20260813-2154-dda37e8b)
 - Added Prompt-o-verse style sweeps: add <count> --tag X with no subject locks <count> different auto-picked subjects to one style (sess-20260813-2154-dda37e8b)
 - Documented emily backup in README.md + docs/COMMANDS.md (previously entirely undocumented); fixed stale Prompt-o-verse section and test count in README (sess-20260813-2154-dda37e8b)
 - Documented all emily promptoverse subcommands in docs/COMMANDS.md (incl. style hybrids, subject annotations); synced --help text; fixed build.sh install ETXTBSY (sess-20260813-2154-dda37e8b)
