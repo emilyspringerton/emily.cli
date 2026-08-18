@@ -155,26 +155,80 @@ func selectSubject(pool []string, exclude map[string]bool, usage map[string]int,
 	return candidates[idx], true
 }
 
-// maybeDiscoverSubject asks Vertex AI's Gemini text model to propose ONE
-// new subject, mirroring maybeDiscoverStyle's contract exactly (decline
-// path included -- the model can say no, and usually will).
-func maybeDiscoverSubject(token string, existingSubjects []string) (*discoveredSubject, error) {
+// maybeDiscoverSubjectForStyle asks Vertex whether style has a well-known,
+// archetypal subject not already in existingSubjects -- the inverse of
+// maybeDiscoverStyle's "does this subject have an iconic style" reasoning
+// (promptoverse_discover.go). Founder, real-time: "can we do subject
+// discovery in the same way we do style discovery? ... choose a style and
+// ask vertex what is the archetypal subject for this?"
+func maybeDiscoverSubjectForStyle(token, styleLabel string, existingSubjects []string) (*discoveredSubject, error) {
 	prompt := fmt.Sprintf(`You maintain a list of "subjects" for Prompt-o-verse, a generative art gallery where each subject gets rendered in various visual styles. A subject is anything picturable -- a person, character, object, or concept -- e.g. "a duck wearing a tuxedo", "Master Chief (Halo)", "a lighthouse keeper", "Aphrodite".
 
 Subjects already used:
 %s
 
-Propose exactly ONE new subject ONLY if it is genuinely interesting or fun and clearly distinct from what's already there -- not a trivial variation. If you cannot think of a good one, decline.
+A style in the registry is: %q.
+
+Does this SPECIFIC style have a well-known, archetypal subject that isn't already in the list above? (e.g. the style "ancient Greek marble statue" strongly suggests a subject like "Aphrodite" or "a discus thrower" if nothing like that exists yet -- that's a genuinely good reason to propose something, not a coincidence to ignore.) Propose exactly ONE new subject ONLY if it's a genuinely strong archetypal fit for THIS style and clearly distinct from what's already there. If you cannot think of a good one, decline.
 
 Respond with ONLY raw JSON (no markdown fences, no commentary), in exactly one of these two shapes:
 {"propose": false}
-{"propose": true, "subject": "short subject description"}`, strings.Join(existingSubjects, ", "))
+{"propose": true, "subject": "short subject description"}`, strings.Join(existingSubjects, ", "), styleLabel)
 
 	text, err := vertexTextGenerate(token, prompt)
 	if err != nil {
 		return nil, err
 	}
 	return parseSubjectProposalJSON(text, existingSubjects)
+}
+
+// discoverSubjectAnchoredToStyle is the style-first subject discovery
+// path: pick one style via the exact same weighted "marble bag" scheme
+// (selectStylesForSubject) normal style selection already uses, ask
+// Vertex for its archetypal subject, and if it declines, try again with a
+// DIFFERENT weighted-picked style -- founder: "and then we choose another
+// style if vertex says no for the first one" / "until we discover a
+// subject." Stops once a subject is discovered, or every style in the
+// registry has been tried once. Returns (nil, nil) if genuinely
+// exhausted -- not a failure, the registry just has no un-covered
+// archetype left this run -- and a real error only for an actual
+// request/auth failure partway through.
+func discoverSubjectAnchoredToStyle(cfg *config.Config, token string, existing []iduna.PromptOVerseNodeSummary, rng *rand.Rand, existingSubjects []string) (*discoveredSubject, error) {
+	discoveredStyles, err := loadDiscoveredStyles(discoveredStylesPath(cfg))
+	if err != nil {
+		return nil, fmt.Errorf("load discovered styles: %w", err)
+	}
+	pool := combinedStylePool(discoveredStyles)
+
+	styleUsage := map[string]int{}
+	for _, n := range existing {
+		styleUsage[n.Label]++
+	}
+
+	tried := map[string]bool{}
+	for len(tried) < len(pool) {
+		remaining := make([]style, 0, len(pool))
+		for _, st := range pool {
+			if !tried[st.Label] {
+				remaining = append(remaining, st)
+			}
+		}
+		picked := selectStylesForSubject(remaining, 1, nil, styleUsage, rng)
+		if len(picked) == 0 {
+			break
+		}
+		st := picked[0]
+		tried[st.Label] = true
+
+		proposed, discErr := maybeDiscoverSubjectForStyle(token, st.Label, existingSubjects)
+		if discErr != nil {
+			return nil, fmt.Errorf("archetypal subject for style %q: %w", st.Label, discErr)
+		}
+		if proposed != nil {
+			return proposed, nil
+		}
+	}
+	return nil, nil
 }
 
 func parseSubjectProposalJSON(text string, existingSubjects []string) (*discoveredSubject, error) {
@@ -255,7 +309,7 @@ func pickSubject(cfg *config.Config, existing []iduna.PromptOVerseNodeSummary, r
 			fmt.Fprintf(os.Stderr, "spontaneous subject discovery skipped (gcloud auth: %v)\n", tokErr)
 			pity.NewSubjectRunsSinceTrigger++
 		} else {
-			proposed, discErr := maybeDiscoverSubject(token, pool)
+			proposed, discErr := discoverSubjectAnchoredToStyle(cfg, token, existing, rng, pool)
 			switch {
 			case discErr != nil:
 				fmt.Fprintf(os.Stderr, "spontaneous subject discovery attempt failed (continuing without it): %v\n", discErr)

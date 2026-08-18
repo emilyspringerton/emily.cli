@@ -345,8 +345,11 @@ Example:
   emily promptoverse add 6
     No subject given -- auto-picks one via the same weighted "marble bag"
     styles use, from every subject ever published (or discovered). Can
-    also propose a brand new subject via Vertex AI, on a pity-adjusted
-    chance, same as styles' spontaneous discovery.
+    also propose a brand new subject on a pity-adjusted chance, STYLE-
+    ANCHORED: picks one style via the same weighted scheme, asks Vertex
+    for that style's archetypal subject, and tries another weighted-
+    picked style if declined -- until one is discovered or every style
+    has been tried.
   emily promptoverse add 5 --tag "game sprite"
     STYLE SWEEP -- no subject AND a --tag together flips <count>'s
     meaning: 5 DIFFERENT auto-picked subjects, all locked to "game

@@ -284,8 +284,13 @@ ever used, plus anything discovered/promoted since.
 
 - `emily promptoverse add <count>` (subject omitted) auto-picks one via the same weighted "marble
   bag" as styles — under-used subjects more likely, never guaranteed — and can also propose a
-  brand new subject via Vertex AI on a pity-adjusted chance, exactly like styles' spontaneous
-  discovery, even when the pool already has candidates.
+  brand new subject on a pity-adjusted chance, even when the pool already has candidates. This
+  discovery is **style-anchored**, the mirror image of style discovery's own subject-anchored
+  reasoning (`add`'s "Aphrodite suggests ancient Greek marble statue" logic above, run in reverse):
+  it picks one style via the exact same weighted marble-bag scheme, asks Vertex for that style's
+  archetypal subject (e.g. "ancient Greek marble statue" suggesting "Aphrodite" back), and if Vertex
+  declines, tries a different weighted-picked style — repeating until a subject is discovered or
+  every style in the registry has been tried once.
 - Subjects marked rare (via `promote-subject --rare`) are excluded by default with the same
   pity-adjusted group roll rare styles get.
 - `emily promptoverse brainstorm --target subjects` seeds GPT-2 from a random sample of real used
