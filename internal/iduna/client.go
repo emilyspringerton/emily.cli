@@ -424,6 +424,87 @@ func (c *Client) ListPromptOVerseNodes() ([]PromptOVerseNodeSummary, error) {
 	return wrapped.Nodes, nil
 }
 
+// PromptOVerseNodeDetail is the full record for one node, including the
+// prompts -- used by `emily promptoverse regenerate` to look up what it's
+// creating a variant of.
+type PromptOVerseNodeDetail struct {
+	Slug           string            `json:"slug"`
+	Label          string            `json:"label"`
+	Subject        string            `json:"subject"`
+	Kind           string            `json:"kind"`
+	EZPrompt       string            `json:"ez_prompt"`
+	ExpandedPrompt string            `json:"expanded_prompt"`
+	Tags           map[string]string `json:"tags,omitempty"`
+}
+
+// ErrPromptOVerseNodeNotFound means the slug doesn't exist.
+var ErrPromptOVerseNodeNotFound = errors.New("promptoverse: node not found")
+
+// GetPromptOVerseNodeBySlug fetches one node's full record -- public
+// endpoint, no auth required.
+func (c *Client) GetPromptOVerseNodeBySlug(slug string) (PromptOVerseNodeDetail, error) {
+	req, _ := http.NewRequest("GET", c.BaseURL+"/api/v1/promptoverse/nodes/"+slug, nil)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return PromptOVerseNodeDetail{}, fmt.Errorf("get promptoverse node: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode == http.StatusNotFound {
+		return PromptOVerseNodeDetail{}, ErrPromptOVerseNodeNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return PromptOVerseNodeDetail{}, fmt.Errorf("get promptoverse node %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+	var n PromptOVerseNodeDetail
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return PromptOVerseNodeDetail{}, fmt.Errorf("get promptoverse node decode: %w", err)
+	}
+	return n, nil
+}
+
+// PromptOVerseVariant is a new, additional generated image for an
+// already-published node -- "regenerate with variation" (S176-30).
+// Additive: the original node/image is never touched.
+type PromptOVerseVariant struct {
+	EZPrompt       string `json:"ez_prompt"`
+	ExpandedPrompt string `json:"expanded_prompt"`
+	ImageBase64    string `json:"image_base64"`
+	Note           string `json:"note"`
+}
+
+// AddPromptOVerseVariant attaches a variant to an existing node. Requires
+// promptoverse.write.
+func (c *Client) AddPromptOVerseVariant(slug string, v PromptOVerseVariant) (url string, err error) {
+	if err := c.Auth(); err != nil {
+		return "", err
+	}
+	body, _ := json.Marshal(v)
+	req, _ := http.NewRequest("POST", c.BaseURL+"/api/v1/promptoverse/nodes/"+slug+"/variants", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("add promptoverse variant: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode == http.StatusNotFound {
+		return "", ErrPromptOVerseNodeNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("add promptoverse variant %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("add promptoverse variant decode: %w", err)
+	}
+	return result.URL, nil
+}
+
 func filterByType(apples []Apple, appleType string) []Apple {
 	out := apples[:0]
 	for _, a := range apples {

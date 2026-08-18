@@ -277,6 +277,8 @@ func RunPromptOVerse(args []string) int {
 		return runPromptOVersePromoteSubject(args[1:])
 	case "mashups":
 		return runPromptOVerseMashups(args[1:])
+	case "regenerate":
+		return runPromptOVerseRegenerate(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "emily promptoverse: unknown subcommand %q\n\n", args[0])
 		return promptoverseUsage()

@@ -212,3 +212,82 @@ func TestGetApple_notFound(t *testing.T) {
 		t.Fatal("GetApple 9999 should return error")
 	}
 }
+
+func TestGetPromptOVerseNodeBySlug_Found(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/promptoverse/nodes/lil-wayne-paper-craft", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, `{"slug":"lil-wayne-paper-craft","label":"paper-craft","subject":"Lil Wayne","kind":"surreal","ez_prompt":"paper-craft Lil Wayne","expanded_prompt":"grey hoodie"}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
+	n, err := c.GetPromptOVerseNodeBySlug("lil-wayne-paper-craft")
+	if err != nil {
+		t.Fatalf("GetPromptOVerseNodeBySlug: %v", err)
+	}
+	if n.Subject != "Lil Wayne" || n.ExpandedPrompt != "grey hoodie" {
+		t.Errorf("unexpected node: %+v", n)
+	}
+}
+
+func TestGetPromptOVerseNodeBySlug_NotFound(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/promptoverse/nodes/does-not-exist", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"node not found"}`, http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
+	_, err := c.GetPromptOVerseNodeBySlug("does-not-exist")
+	if err != iduna.ErrPromptOVerseNodeNotFound {
+		t.Errorf("expected ErrPromptOVerseNodeNotFound, got %v", err)
+	}
+}
+
+func TestAddPromptOVerseVariant_Success(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/auth/agent", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, `{"access_token":"test-jwt","expires_in":3600}`)
+	})
+	mux.HandleFunc("/api/v1/promptoverse/nodes/lil-wayne-paper-craft/variants", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		fmt.Fprintln(w, `{"status":"variant added","url":"https://okemily.com/prompt-o-verse/lil-wayne-paper-craft/"}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
+	url, err := c.AddPromptOVerseVariant("lil-wayne-paper-craft", iduna.PromptOVerseVariant{
+		EZPrompt: "p", ExpandedPrompt: "red hoodie", ImageBase64: "ZmFrZQ==", Note: "red hoodie instead of grey",
+	})
+	if err != nil {
+		t.Fatalf("AddPromptOVerseVariant: %v", err)
+	}
+	if url != "https://okemily.com/prompt-o-verse/lil-wayne-paper-craft/" {
+		t.Errorf("unexpected url: %q", url)
+	}
+}
+
+func TestAddPromptOVerseVariant_NotFound(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/auth/agent", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, `{"access_token":"test-jwt","expires_in":3600}`)
+	})
+	mux.HandleFunc("/api/v1/promptoverse/nodes/does-not-exist/variants", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"node not found"}`, http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
+	_, err := c.AddPromptOVerseVariant("does-not-exist", iduna.PromptOVerseVariant{
+		EZPrompt: "p", ExpandedPrompt: "p", ImageBase64: "ZmFrZQ==",
+	})
+	if err != iduna.ErrPromptOVerseNodeNotFound {
+		t.Errorf("expected ErrPromptOVerseNodeNotFound, got %v", err)
+	}
+}
