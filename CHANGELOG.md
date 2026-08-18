@@ -1,4 +1,5 @@
 ## 2026-08-18
+- Documented all emily promptoverse subcommands in docs/COMMANDS.md (incl. style hybrids, subject annotations); synced --help text; fixed build.sh install ETXTBSY (sess-20260813-2154-dda37e8b)
 - Added subject-level Prompt-o-verse prompt annotations (multi-alias, TYLER-lore auto-derivation, backfill-annotation) and style hybrids via repeated --tag; fixed a slugifyPO double-hyphen bug (sess-20260813-2154-dda37e8b)
 - Added Prompt-o-verse 'game sprite' style + ImageMagick chroma-key strip in drainQueue, producing real alpha-transparent sprite PNGs (sess-20260813-2154-dda37e8b)
 - emily promptoverse regenerate <slug> --note - client-side counterpart to IDUNA's variants endpoint (sess-20260813-2154-dda37e8b)
