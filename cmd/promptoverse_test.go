@@ -48,6 +48,73 @@ func TestPromptoverseStyles_AllHaveNonEmptyTemplates(t *testing.T) {
 	}
 }
 
+func TestParseAddPositionalArgs_ExplicitSubjectAndCount(t *testing.T) {
+	subject, count, auto, err := parseAddPositionalArgs([]string{"ducks", "4"}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "ducks" || count != 4 || auto {
+		t.Errorf("got subject=%q count=%d auto=%v", subject, count, auto)
+	}
+}
+
+func TestParseAddPositionalArgs_BareCountIsAutoSubject(t *testing.T) {
+	subject, count, auto, err := parseAddPositionalArgs([]string{"4"}, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "" || count != 4 || !auto {
+		t.Errorf("got subject=%q count=%d auto=%v", subject, count, auto)
+	}
+}
+
+func TestParseAddPositionalArgs_SubjectAloneWithTagDefaultsCountToOne(t *testing.T) {
+	// Founder, real-time: "add fox --tag 'outer space' --force SHOULD SKIP
+	// QUEUE AND LIFO ADD TO THE QUEUE AND PROCESS THAT ONE FIRST ONLY IF A
+	// NUMBER IS NOT SET."
+	subject, count, auto, err := parseAddPositionalArgs([]string{"fox"}, "outer space")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "fox" || count != 1 || auto {
+		t.Errorf("got subject=%q count=%d auto=%v, want subject=fox count=1 auto=false", subject, count, auto)
+	}
+}
+
+func TestParseAddPositionalArgs_SubjectAloneWithoutTagIsStillAnError(t *testing.T) {
+	// The new subject-only shape only applies when --tag is set -- a bare
+	// non-numeric single arg with no tag has no meaning to fall back to.
+	_, _, _, err := parseAddPositionalArgs([]string{"fox"}, "")
+	if err == nil {
+		t.Fatal("expected an error for a non-numeric single arg with no --tag")
+	}
+}
+
+func TestParseAddPositionalArgs_NumericSingleArgWithTagIsStillAutoSubjectCount(t *testing.T) {
+	// A numeric single arg with --tag set is unchanged: auto-pick subject,
+	// the number is the count, --tag forces one of the count slots.
+	subject, count, auto, err := parseAddPositionalArgs([]string{"4"}, "gladiator")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if subject != "" || count != 4 || !auto {
+		t.Errorf("got subject=%q count=%d auto=%v, want subject=\"\" count=4 auto=true", subject, count, auto)
+	}
+}
+
+func TestParseAddPositionalArgs_RejectsBadCountAndBadArgCounts(t *testing.T) {
+	for _, args := range [][]string{
+		{"ducks", "not-a-number"},
+		{"ducks", "0"},
+		{},
+		{"a", "b", "c"},
+	} {
+		if _, _, _, err := parseAddPositionalArgs(args, ""); err == nil {
+			t.Errorf("expected an error for args %v", args)
+		}
+	}
+}
+
 func TestRunPromptOVerseAdd_RejectsBadCount(t *testing.T) {
 	if code := runPromptOVerseAdd([]string{"ducks", "not-a-number"}); code != 1 {
 		t.Errorf("expected exit code 1 for a non-numeric count, got %d", code)
@@ -294,6 +361,58 @@ func TestAppendQueue_DifferentStyleSameSubjectBothKept(t *testing.T) {
 	}
 	if len(items) != 2 {
 		t.Errorf("expected both distinct styles for the same subject to be kept, got %d: %+v", len(items), items)
+	}
+}
+
+func TestPrependQueue_PutsNewItemsAheadOfExistingOnes(t *testing.T) {
+	// Founder, real-time: "add fox 3 --tag 'outer space' fifos the tag
+	// subject combo to the top of the queue and starts on that (force or
+	// not force) but the other 2 gens get added end of queue same as
+	// always." prependQueue is the mechanism for the first half of that --
+	// it must jump ahead of items ALREADY pending, not just items from the
+	// same batch.
+	path := filepath.Join(t.TempDir(), "queue.jsonl")
+	if err := appendQueue(path, []queueItem{
+		{Subject: "already pending 1", StyleLabel: "claymation"},
+		{Subject: "already pending 2", StyleLabel: "watercolor"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := prependQueue(path, []queueItem{
+		{Subject: "fox", StyleLabel: "outer space", Forced: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := loadQueue(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items total, got %d: %+v", len(items), items)
+	}
+	if items[0].Subject != "fox" || items[0].StyleLabel != "outer space" {
+		t.Errorf("expected the prepended item first, got %+v", items[0])
+	}
+	if items[1].Subject != "already pending 1" || items[2].Subject != "already pending 2" {
+		t.Errorf("expected the original two items to keep their relative order behind the new one: %+v", items[1:])
+	}
+}
+
+func TestPrependQueue_SkipsExactDuplicates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "queue.jsonl")
+	item := []queueItem{{Subject: "fox", StyleLabel: "outer space"}}
+	if err := appendQueue(path, item); err != nil {
+		t.Fatal(err)
+	}
+	if err := prependQueue(path, item); err != nil {
+		t.Fatal(err)
+	}
+	items, err := loadQueue(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected the duplicate to be skipped, got %d items: %+v", len(items), items)
 	}
 }
 

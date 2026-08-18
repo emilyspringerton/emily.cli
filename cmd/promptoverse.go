@@ -511,6 +511,35 @@ func appendQueue(path string, newItems []queueItem) error {
 	return writeQueue(path, append(existing, deduped...))
 }
 
+// prependQueue puts newItems at the FRONT of the queue -- ahead of
+// everything already pending, not just ahead of items from the same add
+// call -- so drainQueue's strict FIFO order processes them first. Same
+// dedup backstop as appendQueue. Founder, real-time: "add fox 3 --tag
+// 'outer space' fifos the tag subject combo to the top of the queue and
+// starts on that (force or not force) but the other 2 gens get added end
+// of queue same as always" -- used only for the --tag-forced item(s),
+// never for normal selection, which still goes through appendQueue.
+func prependQueue(path string, newItems []queueItem) error {
+	existing, err := loadQueue(path)
+	if err != nil {
+		return err
+	}
+	have := make(map[string]bool, len(existing))
+	for _, it := range existing {
+		have[it.Subject+"\x00"+it.StyleLabel] = true
+	}
+	deduped := make([]queueItem, 0, len(newItems))
+	for _, it := range newItems {
+		key := it.Subject + "\x00" + it.StyleLabel
+		if have[key] {
+			continue
+		}
+		have[key] = true
+		deduped = append(deduped, it)
+	}
+	return writeQueue(path, append(deduped, existing...))
+}
+
 // requeueQueue re-picks the style for every NON-forced item still pending
 // using the CURRENT selection logic, in place -- original list order,
 // subject grouping, and item count are all preserved exactly; only the
@@ -713,6 +742,45 @@ func selectStylesForSubject(pool []style, count int, exclude map[string]bool, gl
 	return selected
 }
 
+// parseAddPositionalArgs interprets the positional (non-flag) args to
+// `emily promptoverse add`. Three shapes:
+//   - <count> alone (1 arg, parses as a number) -- auto-pick the subject.
+//   - <subject> <count> (2 args) -- the original, explicit form.
+//   - <subject> alone with --tag set (1 arg, does NOT parse as a number) --
+//     added for the "skip the queue" case: count defaults to 1. Founder,
+//     real-time: "add fox --tag 'outer space' --force SHOULD SKIP QUEUE
+//     AND LIFO ADD TO THE QUEUE AND PROCESS THAT ONE FIRST ONLY IF A
+//     NUMBER IS NOT SET."
+//
+// A single non-numeric arg with no --tag is still an error (matches the
+// original behavior -- there's no subject-only shape without --tag).
+func parseAddPositionalArgs(args []string, tag string) (subject string, count int, autoSubject bool, err error) {
+	if len(args) != 1 && len(args) != 2 {
+		return "", 0, false, fmt.Errorf("usage: emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]")
+	}
+	var countArg string
+	count = 1
+	switch {
+	case len(args) == 2:
+		subject = strings.TrimSpace(args[0])
+		countArg = args[1]
+	case tag != "" && func() bool { _, err := strconv.Atoi(args[0]); return err != nil }():
+		subject = strings.TrimSpace(args[0])
+		countArg = ""
+	default:
+		autoSubject = true
+		countArg = args[0]
+	}
+	if countArg != "" {
+		c, convErr := strconv.Atoi(countArg)
+		if convErr != nil || c <= 0 {
+			return "", 0, false, fmt.Errorf("emily promptoverse add: <count> must be a positive integer, got %q", countArg)
+		}
+		count = c
+	}
+	return subject, count, autoSubject, nil
+}
+
 func runPromptOVerseAdd(args []string) int {
 	force := false
 	slow := false
@@ -740,25 +808,9 @@ func runPromptOVerseAdd(args []string) int {
 	}
 	args = rest
 
-	// A bare <count> (1 positional arg) means "auto-pick the subject" --
-	// S176-24+: "copy all those same patterns for topic discovery." An
-	// explicit <subject> <count> (2 args) keeps the original behavior
-	// unchanged.
-	if len(args) != 1 && len(args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: emily promptoverse add [<subject>] <count> [--force] [--slow] [--tag <style>]")
-		return 1
-	}
-	autoSubject := len(args) == 1
-	var subject, countArg string
-	if autoSubject {
-		countArg = args[0]
-	} else {
-		subject = strings.TrimSpace(args[0])
-		countArg = args[1]
-	}
-	count, err := strconv.Atoi(countArg)
-	if err != nil || count <= 0 {
-		fmt.Fprintf(os.Stderr, "emily promptoverse add: <count> must be a positive integer, got %q\n", countArg)
+	subject, count, autoSubject, err := parseAddPositionalArgs(args, tag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 
@@ -991,18 +1043,38 @@ func runPromptOVerseAdd(args []string) int {
 	}
 
 	now := time.Now().UTC()
-	newItems := make([]queueItem, 0, len(selected))
+	// A --tag-forced item jumps to the FRONT of the whole queue (ahead of
+	// everything already pending, not just the rest of this batch) and gets
+	// drained first -- founder: "fifos the tag subject combo to the top of
+	// the queue and starts on that (force or not force) but the other 2
+	// gens get added end of queue same as always." Everything else keeps
+	// the normal FIFO-behind-existing-items behavior.
+	var frontItems, backItems []queueItem
 	for _, st := range selected {
-		newItems = append(newItems, queueItem{
+		item := queueItem{
 			Subject: subject, StyleLabel: st.Label, EnqueuedAt: now,
 			Forced: forcedLabel != "" && st.Label == forcedLabel,
-		})
+		}
+		if item.Forced {
+			frontItems = append(frontItems, item)
+		} else {
+			backItems = append(backItems, item)
+		}
 	}
-	if err := appendQueue(path, newItems); err != nil {
-		fmt.Fprintf(os.Stderr, "enqueue: %v\n", err)
-		return 1
+	if len(frontItems) > 0 {
+		if err := prependQueue(path, frontItems); err != nil {
+			fmt.Fprintf(os.Stderr, "enqueue (front): %v\n", err)
+			return 1
+		}
+		fmt.Printf("queued %q for %q at the FRONT of the queue (--tag forced, processed first)\n", forcedLabel, subject)
 	}
-	fmt.Printf("queued %d requests for %q (FIFO — behind anything already pending)\n", len(newItems), subject)
+	if len(backItems) > 0 {
+		if err := appendQueue(path, backItems); err != nil {
+			fmt.Fprintf(os.Stderr, "enqueue: %v\n", err)
+			return 1
+		}
+		fmt.Printf("queued %d requests for %q (FIFO — behind anything already pending)\n", len(backItems), subject)
+	}
 
 	return drainQueue(cfg, force, slow)
 }
