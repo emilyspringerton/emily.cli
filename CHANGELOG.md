@@ -1,4 +1,5 @@
 ## 2026-08-18
+- Replaced vacuum-based spontaneous subject discovery with style-anchored discovery: pick a style via the weighted scheme, ask Vertex for its archetypal subject, retry with a different style if declined (sess-20260813-2154-dda37e8b)
 - Fixed vertexTextGenerate's 30s HTTP timeout (bumped to 90s) causing silent failures when creating new forced/hybrid Prompt-o-verse styles (sess-20260813-2154-dda37e8b)
 - Added Prompt-o-verse style sweeps: add <count> --tag X with no subject locks <count> different auto-picked subjects to one style (sess-20260813-2154-dda37e8b)
 - Documented emily backup in README.md + docs/COMMANDS.md (previously entirely undocumented); fixed stale Prompt-o-verse section and test count in README (sess-20260813-2154-dda37e8b)
