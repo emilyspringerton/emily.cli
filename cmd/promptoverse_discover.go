@@ -287,7 +287,15 @@ func vertexTextGenerate(token, prompt string) (string, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	httpClient := &http.Client{Timeout: 30 * time.Second}
+	// 90s, matching vertexGenerateImage's timeout -- 30s was too tight for
+	// a real request under any load and failed loud rather than slow:
+	// founder live, 2026-08-18, `add Fox --tag emo --tag FFXI` (a new
+	// hybrid style, expanded via this exact call) errored "context
+	// deadline exceeded" before ANYTHING got queued -- style creation runs
+	// before the queue write in runPromptOVerseAdd's forcing block, so a
+	// timeout here looks like the whole command hung and did nothing,
+	// not a normal slow-response retry case.
+	httpClient := &http.Client{Timeout: 90 * time.Second}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
