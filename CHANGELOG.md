@@ -1,3 +1,11 @@
+## 2026-08-20
+- docs(README): documented `emily key set GMAIL_SMTP_ADDRESS`/`GMAIL_SMTP_PASSWORD` — the founder
+  asked directly to make sure the README has real instructions for adding the Gmail app password.
+  Added a concrete example under the existing `emily key` section (no new subcommand needed, the
+  generic form already covers it) pointing at both the SMTP send path (`emily-agent/gmail.go`) and
+  the IMAP read script (`EMILY/scripts/gmail_imap_fetch.py`), plus an explicit note not to paste
+  the password into chat. (sess-20260813-2154-dda37e8b)
+
 ## 2026-08-18
 - Replaced vacuum-based spontaneous subject discovery with style-anchored discovery: pick a style via the weighted scheme, ask Vertex for its archetypal subject, retry with a different style if declined (sess-20260813-2154-dda37e8b)
 - Fixed vertexTextGenerate's 30s HTTP timeout (bumped to 90s) causing silent failures when creating new forced/hybrid Prompt-o-verse styles (sess-20260813-2154-dda37e8b)

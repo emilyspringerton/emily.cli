@@ -158,6 +158,21 @@ emily key show NAME
 emily key unset NAME
 ```
 
+**Gmail (Emily Prime's email integration, `emily-agent/gmail.go`)** — a Google Account App
+Password (Google Account → Security → 2-Step Verification → App Passwords; needs 2FA enabled on
+the account) enables both sending and reading, since app passwords aren't scoped per-protocol:
+
+```bash
+emily key set GMAIL_SMTP_ADDRESS  <your gmail address>
+emily key set GMAIL_SMTP_PASSWORD <the 16-char app password>
+```
+
+Restart `emily-agent` to pick up send support. Reading uses the same two values via
+`EMILY/scripts/gmail_imap_fetch.py` (`source EMILY/var/emily-secrets.env` first, then
+`python3 gmail_imap_fetch.py --search '...'` or `--latest N`) — no separate credential needed.
+Never paste the password itself into a chat/session transcript; `emily key set` is the intended
+channel and writes it to a 0600 env file.
+
 ### Prompt-o-verse — generate + publish gallery nodes
 
 ```bash
