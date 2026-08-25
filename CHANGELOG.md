@@ -1,4 +1,5 @@
 ## 2026-08-25
+- emily context build rewritten pure-CLI (no LLM, no ANTHROPIC_API_KEY): deterministic header+lead-line extractive summary replaces the old claude-haiku compression call. Live-verified with the key unset: 47/47 golden sources compile. Commit 79bc797. (sess-20260825-1938-f6bd411e)
 
 - added auto-release CI job: cross-compiled linux/darwin binaries, real non-prerelease GitHub release on every push to main (sess-20260825-1938-f6bd411e)
 
