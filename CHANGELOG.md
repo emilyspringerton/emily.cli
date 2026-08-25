@@ -1,3 +1,7 @@
+## 2026-08-25
+
+- added auto-release CI job: cross-compiled linux/darwin binaries, real non-prerelease GitHub release on every push to main (sess-20260825-1938-f6bd411e)
+
 ## 2026-08-20
 - docs(README): documented `emily key set GMAIL_SMTP_ADDRESS`/`GMAIL_SMTP_PASSWORD` — the founder
   asked directly to make sure the README has real instructions for adding the Gmail app password.
