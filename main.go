@@ -80,6 +80,8 @@ func main() {
 		code = cmd.RunContext(rest)
 	case "northstar":
 		code = cmd.RunNorthstar(rest)
+	case "golden":
+		code = cmd.RunGolden(rest)
 	case "train":
 		code = cmd.RunTrain(rest)
 	case "gpt2":
