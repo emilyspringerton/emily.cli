@@ -1,3 +1,7 @@
+## 2026-08-26
+
+- emily kanban {list,add,move,rm} shipped -- agent/CLI half of the priority layer over BACKLOG.md ('i can ask the ai agent to work from the priority or cruise backlog'). New iduna.Client kanban methods, 8 new tests. Also documented emily golden (S200-04, shipped last session but missing from README) alongside it. Apple #16053. (sess-20260825-1938-f6bd411e)
+
 ## 2026-08-25
 - S200-04: 'emily golden {list,enable,disable,status}' -- toggleable golden-repo config + real GitHub Actions CI-status polling, replacing manual curl+python one-liners. Deliberately pure Go (cgo would regress the pure-Go cross-compile release pipeline S202-20 just shipped), flagged not silently decided. 10 new tests, go test ./... green. Live-verified: first run correctly surfaced a real, currently-broken PRRJECT_FATBABY CI outage. Apple #16037. (sess-20260825-1938-f6bd411e)
 - emily context build rewritten pure-CLI (no LLM, no ANTHROPIC_API_KEY): deterministic header+lead-line extractive summary replaces the old claude-haiku compression call. Live-verified with the key unset: 47/47 golden sources compile. Commit 79bc797. (sess-20260825-1938-f6bd411e)
