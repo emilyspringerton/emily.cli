@@ -231,6 +231,128 @@ func (c *Client) PostApple(payload ApplePayload) (int64, error) {
 	return result.ID, nil
 }
 
+// KanbanCard mirrors IDUNA's kanban_cards row (internal/http/handlers/kanban.go).
+// Founder real-time: "ok lets build a kanban layer on top of our sprints
+// that lets us assign priority for the next open dev to picj up" -> "i can
+// ask the ai agent to work from the priority or cruise backlog" -- this is
+// that agent-facing half, hitting the bearer-gated /api/v1/kanban/cards
+// (kanban.access permission, granted to EMILY-PRIME).
+type KanbanCard struct {
+	ID            int64  `json:"id"`
+	BacklogItemID string `json:"backlog_item_id"`
+	Title         string `json:"title"`
+	Queue         string `json:"queue"`
+	Position      int    `json:"position"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
+}
+
+// ListKanbanCards returns cards, optionally filtered to one queue
+// ("backlog", "priority", "cruise"); pass "" for all queues.
+func (c *Client) ListKanbanCards(queue string) ([]KanbanCard, error) {
+	if err := c.Auth(); err != nil {
+		return nil, err
+	}
+	u := c.BaseURL + "/api/v1/kanban/cards"
+	if queue != "" {
+		u += "?queue=" + url.QueryEscape(queue)
+	}
+	req, _ := http.NewRequest("GET", u, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list kanban cards: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list kanban cards %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+	var cards []KanbanCard
+	if err := json.Unmarshal(raw, &cards); err != nil {
+		return nil, fmt.Errorf("list kanban cards decode: %w", err)
+	}
+	return cards, nil
+}
+
+// AddKanbanCard creates a card (queue "" defaults to "backlog" server-side)
+// and returns its new id.
+func (c *Client) AddKanbanCard(backlogItemID, title, queue string) (int64, error) {
+	if err := c.Auth(); err != nil {
+		return 0, err
+	}
+	payload := map[string]string{"backlog_item_id": backlogItemID, "title": title}
+	if queue != "" {
+		payload["queue"] = queue
+	}
+	body, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", c.BaseURL+"/api/v1/kanban/cards", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("add kanban card: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusCreated {
+		return 0, fmt.Errorf("add kanban card %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+	var result struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return 0, fmt.Errorf("add kanban card decode: %w", err)
+	}
+	return result.ID, nil
+}
+
+// MoveKanbanCard changes a card's queue (the "drag" action) -- id is the
+// kanban card's own id (from ListKanbanCards), not the backlog_item_id.
+func (c *Client) MoveKanbanCard(id int64, queue string) error {
+	if err := c.Auth(); err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string]string{"queue": queue})
+	req, _ := http.NewRequest("PATCH", c.BaseURL+"/api/v1/kanban/cards/"+strconv.FormatInt(id, 10), bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("move kanban card: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("move kanban card %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+	return nil
+}
+
+// DeleteKanbanCard removes a card from the board entirely (BACKLOG.md
+// itself is never touched -- this only ever affects this tracking layer).
+func (c *Client) DeleteKanbanCard(id int64) error {
+	if err := c.Auth(); err != nil {
+		return err
+	}
+	req, _ := http.NewRequest("DELETE", c.BaseURL+"/api/v1/kanban/cards/"+strconv.FormatInt(id, 10), nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete kanban card: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("delete kanban card %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+	return nil
+}
+
 // DriveFile is one file record from GET /api/v1/drive/files.
 type DriveFile struct {
 	ID          string `json:"id"`

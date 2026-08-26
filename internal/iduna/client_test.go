@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/emilyspringerton/emily-cli/internal/iduna"
@@ -60,6 +61,70 @@ func mockServer(t *testing.T) *httptest.Server {
 
 	mux.HandleFunc("/api/v1/apples/9999", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+	})
+
+	// Kanban cards -- a real in-memory store, not canned JSON, so
+	// list/add/move/delete all actually round-trip against each other.
+	kanbanCards := map[int64]*iduna.KanbanCard{}
+	var kanbanNextID int64 = 1
+	mux.HandleFunc("/api/v1/kanban/cards", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			queue := r.URL.Query().Get("queue")
+			out := []iduna.KanbanCard{}
+			for _, c := range kanbanCards {
+				if queue == "" || c.Queue == queue {
+					out = append(out, *c)
+				}
+			}
+			json.NewEncoder(w).Encode(out)
+		case http.MethodPost:
+			var body struct {
+				BacklogItemID string `json:"backlog_item_id"`
+				Title         string `json:"title"`
+				Queue         string `json:"queue"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			if body.BacklogItemID == "" || body.Title == "" {
+				http.Error(w, `{"error":"backlog_item_id and title required"}`, http.StatusBadRequest)
+				return
+			}
+			if body.Queue == "" {
+				body.Queue = "backlog"
+			}
+			id := kanbanNextID
+			kanbanNextID++
+			kanbanCards[id] = &iduna.KanbanCard{ID: id, BacklogItemID: body.BacklogItemID, Title: body.Title, Queue: body.Queue}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]int64{"id": id})
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	mux.HandleFunc("/api/v1/kanban/cards/", func(w http.ResponseWriter, r *http.Request) {
+		idStr := strings.TrimPrefix(r.URL.Path, "/api/v1/kanban/cards/")
+		var id int64
+		fmt.Sscanf(idStr, "%d", &id)
+		card, ok := kanbanCards[id]
+		if !ok {
+			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+			return
+		}
+		switch r.Method {
+		case http.MethodPatch:
+			var body struct {
+				Queue string `json:"queue"`
+			}
+			json.NewDecoder(r.Body).Decode(&body)
+			card.Queue = body.Queue
+			w.WriteHeader(http.StatusOK)
+		case http.MethodDelete:
+			delete(kanbanCards, id)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 	})
 
 	return httptest.NewServer(mux)
@@ -289,5 +354,81 @@ func TestAddPromptOVerseVariant_NotFound(t *testing.T) {
 	})
 	if err != iduna.ErrPromptOVerseNodeNotFound {
 		t.Errorf("expected ErrPromptOVerseNodeNotFound, got %v", err)
+	}
+}
+
+func TestKanban_AddListMoveDelete_RealRoundTrip(t *testing.T) {
+	srv := mockServer(t)
+	defer srv.Close()
+	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
+
+	id, err := c.AddKanbanCard("S202-27", "Body blocking", "")
+	if err != nil {
+		t.Fatalf("AddKanbanCard: %v", err)
+	}
+
+	cards, err := c.ListKanbanCards("")
+	if err != nil {
+		t.Fatalf("ListKanbanCards: %v", err)
+	}
+	if len(cards) != 1 || cards[0].ID != id || cards[0].Queue != "backlog" {
+		t.Fatalf("unexpected cards after add: %+v", cards)
+	}
+
+	if err := c.MoveKanbanCard(id, "priority"); err != nil {
+		t.Fatalf("MoveKanbanCard: %v", err)
+	}
+	priorityCards, err := c.ListKanbanCards("priority")
+	if err != nil {
+		t.Fatalf("ListKanbanCards(priority): %v", err)
+	}
+	if len(priorityCards) != 1 || priorityCards[0].ID != id {
+		t.Fatalf("expected the card in the priority queue after move, got %+v", priorityCards)
+	}
+
+	if err := c.DeleteKanbanCard(id); err != nil {
+		t.Fatalf("DeleteKanbanCard: %v", err)
+	}
+	remaining, err := c.ListKanbanCards("")
+	if err != nil {
+		t.Fatalf("ListKanbanCards after delete: %v", err)
+	}
+	if len(remaining) != 0 {
+		t.Fatalf("expected no cards after delete, got %+v", remaining)
+	}
+}
+
+func TestKanban_AddWithExplicitQueue(t *testing.T) {
+	srv := mockServer(t)
+	defer srv.Close()
+	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
+
+	id, err := c.AddKanbanCard("S202-28", "Ant hero rig", "cruise")
+	if err != nil {
+		t.Fatalf("AddKanbanCard: %v", err)
+	}
+	cards, _ := c.ListKanbanCards("cruise")
+	if len(cards) != 1 || cards[0].ID != id {
+		t.Fatalf("expected the new card directly in the cruise queue, got %+v", cards)
+	}
+}
+
+func TestKanban_AddRejectsEmptyFields(t *testing.T) {
+	srv := mockServer(t)
+	defer srv.Close()
+	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
+
+	if _, err := c.AddKanbanCard("", "no id", ""); err == nil {
+		t.Error("expected an error for an empty backlog_item_id")
+	}
+}
+
+func TestKanban_DeleteUnknownCardErrors(t *testing.T) {
+	srv := mockServer(t)
+	defer srv.Close()
+	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
+
+	if err := c.DeleteKanbanCard(999); err == nil {
+		t.Error("expected an error deleting a card id that doesn't exist")
 	}
 }

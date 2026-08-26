@@ -322,6 +322,27 @@ emily context build              # compile all Tier 1 golden docs → EMILY/cont
 emily northstar <repo>           # print <repo>/docs/NORTHSTAR.md (or docs2/NORTHSTAR.md)
 ```
 
+### Golden — CI-status polling for the "golden repos" (S200-04)
+
+```bash
+emily golden list                       # show every golden repo + on/off state
+emily golden enable <name>               # e.g. emily golden enable REDGARDEN
+emily golden disable <name>
+emily golden status                      # poll GitHub Actions for each enabled repo's latest run
+```
+
+### Kanban — priority layer over EMILY/BACKLOG.md
+
+```bash
+emily kanban list [--queue backlog|priority|cruise]   # default: all queues
+emily kanban add [--queue priority|cruise] <backlog-item-id> <title>
+emily kanban move <card-id> <backlog|priority|cruise>  # the "drag" action
+emily kanban rm <card-id>                              # removes the card only, never touches BACKLOG.md
+```
+
+Backed by IDUNA's `/api/v1/kanban/cards` (requires `kanban.access`); the same board is also a
+drag-and-drop GUI at `okemily.com/admin/kanban` (3 columns, requires `iduna.admin`).
+
 ### Chat — terminal chat with Emily Prime
 
 ```bash

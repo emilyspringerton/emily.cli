@@ -82,6 +82,8 @@ func main() {
 		code = cmd.RunNorthstar(rest)
 	case "golden":
 		code = cmd.RunGolden(rest)
+	case "kanban":
+		code = cmd.RunKanban(rest)
 	case "train":
 		code = cmd.RunTrain(rest)
 	case "gpt2":
