@@ -322,6 +322,10 @@ emily context build              # compile all Tier 1 golden docs → EMILY/cont
 emily northstar <repo>           # print <repo>/docs/NORTHSTAR.md (or docs2/NORTHSTAR.md)
 ```
 
+`context build` is pure-CLI (deterministic header+lead-line extraction) — no LLM call, no
+`ANTHROPIC_API_KEY` needed, ever. It used to call claude-haiku per source, which meant the whole
+compiler sat dead behind a billing outage for over five weeks; that dependency is gone entirely.
+
 ### Golden — CI-status polling for the "golden repos" (S200-04)
 
 ```bash
