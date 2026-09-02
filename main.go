@@ -90,6 +90,8 @@ func main() {
 		code = cmd.RunGPT2(rest)
 	case "key":
 		code = cmd.RunKey(rest)
+	case "email":
+		code = cmd.RunEmail(rest)
 	case "chat":
 		code = cmd.RunChat(rest)
 	case "shankpit":
@@ -613,6 +615,11 @@ Usage:
   emily key unset
         Manage ANTHROPIC_API_KEY in EMILY/var/emily-secrets.env.
         Set once; loaded automatically by all emily commands that call Anthropic APIs.
+
+  emily email send --to <address> --subject <text> (--body <text> | --body-file <path>)
+        Sends one plain-text email via Gmail SMTP (App Password auth). Requires
+        GMAIL_SMTP_ADDRESS/GMAIL_SMTP_PASSWORD -- set with emily key set (see above), same
+        emily-secrets.env this file's own ANTHROPIC_API_KEY entry lives in.
 
   emily emilyos posture get|set <STATE>
   emily emilyos audit tail|verify|export <outdir>

@@ -13,18 +13,20 @@ import (
 
 // Config holds resolved runtime configuration.
 type Config struct {
-	IDUNABaseURL     string
-	IDUNAAgentName   string
-	IDUNAAgentSecret string
-	AnthropicKey     string
-	FatBabyRoot      string
-	EmilyRoot        string
-	ShankpitRoot     string
-	RedgardenRoot    string
-	SurvivalRoot     string
-	TylerRoot        string
-	SecretsFile      string
-	EmilySecretsFile string
+	IDUNABaseURL      string
+	IDUNAAgentName    string
+	IDUNAAgentSecret  string
+	AnthropicKey      string
+	FatBabyRoot       string
+	EmilyRoot         string
+	ShankpitRoot      string
+	RedgardenRoot     string
+	SurvivalRoot      string
+	TylerRoot         string
+	SecretsFile       string
+	EmilySecretsFile  string
+	GmailSMTPAddress  string // real Gmail address; also the "From" and SMTP auth username
+	GmailSMTPPassword string // 16-char Google Account App Password (2FA required), NOT the real account password
 }
 
 // Resolve reads env vars and auto-populates missing fields from the secrets files.
@@ -61,6 +63,24 @@ func Resolve() (*Config, error) {
 			cfg.AnthropicKey = key
 			// Inject so callers using os.Getenv see it without extra wiring.
 			_ = os.Setenv("ANTHROPIC_API_KEY", key)
+		}
+	}
+
+	// Load GMAIL_SMTP_ADDRESS/GMAIL_SMTP_PASSWORD the same way -- env first, fall back to
+	// emily-secrets.env. Same real credential `emily key set GMAIL_SMTP_ADDRESS/PASSWORD`
+	// already writes there (see emily-agent/gmail.go's own header comment, "Path 2 — SMTP with a
+	// Gmail App Password"); `emily email send` (cmd/email.go) is the real CLI-side consumer,
+	// added 2026-09-02 so sending an email doesn't require hand-writing a Go program per call.
+	cfg.GmailSMTPAddress = os.Getenv("GMAIL_SMTP_ADDRESS")
+	if cfg.GmailSMTPAddress == "" {
+		if v, err := readEnvFile(cfg.EmilySecretsFile, "GMAIL_SMTP_ADDRESS"); err == nil && v != "" {
+			cfg.GmailSMTPAddress = v
+		}
+	}
+	cfg.GmailSMTPPassword = os.Getenv("GMAIL_SMTP_PASSWORD")
+	if cfg.GmailSMTPPassword == "" {
+		if v, err := readEnvFile(cfg.EmilySecretsFile, "GMAIL_SMTP_PASSWORD"); err == nil && v != "" {
+			cfg.GmailSMTPPassword = v
 		}
 	}
 
