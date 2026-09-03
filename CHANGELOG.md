@@ -8,8 +8,13 @@
   convention. Real prerequisite for `BPHS-00001`'s own "surprise box" ask and
   `WOTAN_HAT_STORE_NORTHSTAR.md` Phase 4's user-generated hats. New test
   (`TestPromptoverseHatStyle_IsStandaloneItemNotACharacter`). `go build/test ./...` clean.
-  Live generation run in progress: `emily promptoverse add pirate --tag "promptoverse hat"`
-  (HSG-000's own literal example) -- see follow-up entry once it completes.
+  Live-verified: `emily promptoverse add pirate --tag "promptoverse hat"` (HSG-000's own
+  literal example) generated and published a real standalone hat item, live at
+  `https://okemily.com/prompt-o-verse/pirate-promptoverse-hat/` (confirmed 200). Real, honest
+  note: this command also auto-drains the existing promptoverse generation queue after a forced
+  request -- I misjudged that real, intentional per-request backoff sleep (35s, escalating) as a
+  hung process partway through and killed it after 10 of 44 queued items had generated; nothing
+  broke, the other items simply stay queued for a future run.
 
 - `emily blog post -slug <s> -title <t> [-author <name>] (-body <text> | -body-file <path>)`
   shipped -- real, reusable CLI support for publishing to okemily.com's blog (kanban
