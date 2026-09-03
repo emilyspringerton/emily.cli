@@ -657,6 +657,55 @@ func (c *Client) MergeNodeTags(slug string, tags map[string]string) error {
 	return nil
 }
 
+// BlogPost is the payload for PostBlog -- mirrors createPostRequest in
+// IDUNA/internal/http/handlers/blog.go exactly.
+type BlogPost struct {
+	Slug   string `json:"slug"`
+	Title  string `json:"title"`
+	Author string `json:"author"`
+	Body   string `json:"body"`
+	AdLine string `json:"ad_line,omitempty"`
+	AdCTA  string `json:"ad_cta,omitempty"`
+	AdHref string `json:"ad_href,omitempty"`
+}
+
+// PostBlog publishes a post to okemily.com's blog (kanban `BLOGREPORT-0111` and the general
+// "post a real ecosystem update" need -- no CLI support existed for this before, every prior
+// post was published via a raw, one-off curl call). Requires the `blog.write` permission (EMILY
+// -PRIME already has it, see IDUNA/config/agents.json). Publishing is live the moment this
+// returns -- BlogHandler.Create re-renders the post + index to static HTML synchronously, no
+// separate build step.
+func (c *Client) PostBlog(p BlogPost) (url string, err error) {
+	if err := c.Auth(); err != nil {
+		return "", err
+	}
+
+	body, _ := json.Marshal(p)
+	req, _ := http.NewRequest("POST", c.BaseURL+"/api/v1/blog/posts", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("post blog: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("post blog %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+
+	// Matches BlogHandler.Create's own real response shape exactly (status/slug/url) --
+	// there is no "id" field returned.
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("post blog decode: %w", err)
+	}
+	return result.URL, nil
+}
+
 func filterByType(apples []Apple, appleType string) []Apple {
 	out := apples[:0]
 	for _, a := range apples {

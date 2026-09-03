@@ -1,3 +1,16 @@
+## 2026-09-03
+
+- `emily blog post -slug <s> -title <t> [-author <name>] (-body <text> | -body-file <path>)`
+  shipped -- real, reusable CLI support for publishing to okemily.com's blog (kanban
+  `BLOGREPORT-0111`, "long and detailed blog post with a list of literally all of the tickets we
+  closed in the last 12 hours"). No CLI existed for this before -- every prior post ("The Full
+  Eighteen," the State of the Ecosystem series) was published via a raw, one-off curl call,
+  hand-minting an M2M token each time. New `iduna.Client.PostBlog` mirrors `PostPromptOVerseNode`'s
+  own real client-method pattern exactly, POSTing to IDUNA's existing `POST /api/v1/blog/posts`
+  (requires the `blog.write` permission -- EMILY-PRIME already has it). `-body-file` is the
+  preferred path for anything longer than a line, since blog bodies run to multiple paragraphs.
+  `go build/vet/test ./...` all clean. session: sess-20260902-2008-ed50169e
+
 ## 2026-09-02
 
 - `emily email send --to <address> --subject <text> (--body <text> | --body-file <path>)` shipped -- a real, general "send one plain-text email" CLI command, extracted from a one-off Go program written in-session to deliver a real PAPERCRAFT account's login credentials. Reuses the exact SMTP path (STARTTLS, Gmail App Password) emily-agent/gmail.go's own "Path 2" already established, via new `config.Config.GmailSMTPAddress/GmailSMTPPassword` fields auto-resolved from `GMAIL_SMTP_ADDRESS`/`GMAIL_SMTP_PASSWORD` (env, or `EMILY/var/emily-secrets.env` via `emily key set`) the same way `AnthropicKey` already is. The specific send this was built for (to garybifrost@gmail.com) failed from this Claude Code sandbox -- outbound SMTP (587 and 465) both time out here even though plain HTTPS works, a real, confirmed egress restriction, not a code/credential bug -- so this command exists to retry that send from an environment that does have SMTP egress. 4 new tests (arg validation, missing-credentials path); real send itself untestable without a live SMTP endpoint, verified instead by an actual live send attempt this session (hit the same confirmed network wall, not a code error). session: sess-20260902-2008-ed50169e

@@ -5,6 +5,7 @@
 //   emily observe [flags] <message>        — post observation to FatBaby pipeline
 //   emily apples list [filter]             — query IDUNA Apples log
 //   emily apples post -t <type> <title>    — post Apple to IDUNA
+//   emily blog post -slug <s> -title <t>   — publish a post to okemily.com's blog
 //   emily watch [repo]                     — tail IDUNA Apples log in real-time
 //   emily status                           — cross-repo git + IDUNA state
 //   emily sync [--all] [--dry-run]         — sync FatBaby observations → IDUNA
@@ -58,6 +59,8 @@ func main() {
 		code = cmd.RunObserve(rest)
 	case "apples":
 		code = cmd.RunApples(rest)
+	case "blog":
+		code = cmd.RunBlog(rest)
 	case "watch":
 		code = cmd.RunWatch(rest)
 	case "status":
@@ -187,6 +190,22 @@ Examples:
   emily observe -s error "eps-processor at 0 articles/hr" --fix "check ticker map"
   git log -1 --oneline | emily observe -s info
   emily observe --dry-run "test probe"
+`)
+	case "blog":
+		fmt.Print(`emily blog — publish to the okemily.com blog
+
+Subcommands:
+  emily blog post -slug <slug> -title <title> [-author <name>] (-body <text> | -body-file <path>)
+
+flags:
+  -slug        URL slug, lowercase letters/numbers/hyphens (required)
+  -title       post title (required)
+  -author      byline (default "Claude Code (guest)")
+  -body        post body text (short posts only)
+  -body-file   path to a file with the post body (preferred for anything longer than a line)
+  -ad-line, -ad-cta, -ad-href   optional ad block
+
+Requires IDUNA_AGENT_SECRET for an agent with the blog.write permission (EMILY-PRIME has it).
 `)
 	case "apples":
 		fmt.Print(`emily apples — interact with the IDUNA Apples log
