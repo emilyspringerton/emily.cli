@@ -111,7 +111,25 @@ type style struct {
 const promptoverseSpriteStyleLabel = "game sprite"
 const promptoverseSpriteChromaKeyHex = "#00FF00"
 
+// promptoverseHatStyleLabel — kanban HSG-000 ("promptoverse hat gen - we already query for the
+// sprites with the specific background and give them a good prompt for a nice pixel art hat as
+// the tag promptoverse hat pirate"). A standalone cosmetic item render (a hat/headwear object
+// on its own, not a full character wearing it), for BRAWLPIT's own real hat-store catalog
+// (WOTAN_HAT_STORE_NORTHSTAR.md Phase 4's own "user-generated hats" ask, kanban BPHS-00001's
+// own real dependency). Same real chroma-key convention promptoverseSpriteStyleLabel already
+// established, reused rather than reinvented, for the same real reason (image models don't
+// reliably produce true alpha transparency).
+const promptoverseHatStyleLabel = "promptoverse hat"
+
 var promptoverseStyles = []style{
+	{promptoverseHatStyleLabel, "surreal", func(s string) string {
+		return fmt.Sprintf("A single standalone pixel-art hat/headwear item themed around %s, "+
+			"centered, isometric 3/4 product-icon angle, no head or character wearing it -- just "+
+			"the hat object by itself, clean bold pixel-art outlines, limited retro color "+
+			"palette, video-game inventory-icon style -- on a SOLID PURE GREEN chroma-key "+
+			"background (%s), absolutely no scenery, no props, no shadows, no gradient, no "+
+			"texture behind the item, only flat solid green fills the entire background.", s, promptoverseSpriteChromaKeyHex)
+	}},
 	{promptoverseSpriteStyleLabel, "surreal", func(s string) string {
 		return fmt.Sprintf("A full-body character portrait of %s, centered, facing forward, "+
 			"standing in a neutral idle pose, video-game-sprite proportions, clean bold outlines, "+

@@ -1,5 +1,16 @@
 ## 2026-09-03
 
+- New `promptoverse hat` style registered in `promptoverseStyles` (kanban `HSG-000`: "promptoverse
+  hat gen - we already query for the sprites with the specific background and give them a good
+  prompt for a nice pixel art hat as the tag promptoverse hat pirate"). Real, load-bearing
+  distinction from the existing `game sprite` style: renders a standalone hat/headwear item icon
+  (no head or character wearing it), reusing the sprite style's own real solid-green chroma-key
+  convention. Real prerequisite for `BPHS-00001`'s own "surprise box" ask and
+  `WOTAN_HAT_STORE_NORTHSTAR.md` Phase 4's user-generated hats. New test
+  (`TestPromptoverseHatStyle_IsStandaloneItemNotACharacter`). `go build/test ./...` clean.
+  Live generation run in progress: `emily promptoverse add pirate --tag "promptoverse hat"`
+  (HSG-000's own literal example) -- see follow-up entry once it completes.
+
 - `emily blog post -slug <s> -title <t> [-author <name>] (-body <text> | -body-file <path>)`
   shipped -- real, reusable CLI support for publishing to okemily.com's blog (kanban
   `BLOGREPORT-0111`, "long and detailed blog post with a list of literally all of the tickets we

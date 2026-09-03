@@ -31,6 +31,34 @@ func TestSlugifyPO(t *testing.T) {
 	}
 }
 
+// TestPromptoverseHatStyle_IsStandaloneItemNotACharacter -- kanban HSG-000 ("promptoverse hat
+// gen... a nice pixel art hat"). Real, load-bearing distinction from the existing "game sprite"
+// style: this must render the hat/headwear OBJECT alone, not a character wearing it, since
+// BRAWLPIT's own hat catalog (WOTAN_HAT_STORE_NORTHSTAR.md Phase 1) needs a standalone item
+// icon, not a full-body portrait.
+func TestPromptoverseHatStyle_IsStandaloneItemNotACharacter(t *testing.T) {
+	var hatStyle *style
+	for i := range promptoverseStyles {
+		if promptoverseStyles[i].Label == promptoverseHatStyleLabel {
+			hatStyle = &promptoverseStyles[i]
+			break
+		}
+	}
+	if hatStyle == nil {
+		t.Fatal("expected a registered style with label promptoverseHatStyleLabel")
+	}
+	prompt := hatStyle.Prompt("pirate")
+	if !strings.Contains(prompt, "pirate") {
+		t.Errorf("expected the subject to appear in the prompt: %q", prompt)
+	}
+	if !strings.Contains(prompt, "no head or character wearing it") {
+		t.Errorf("expected an explicit standalone-item instruction, not a worn-hat portrait: %q", prompt)
+	}
+	if !strings.Contains(prompt, promptoverseSpriteChromaKeyHex) {
+		t.Errorf("expected the same real chroma-key convention the sprite style already uses: %q", prompt)
+	}
+}
+
 func TestPromptoverseStyles_AllHaveNonEmptyTemplates(t *testing.T) {
 	seen := map[string]bool{}
 	for _, st := range promptoverseStyles {
