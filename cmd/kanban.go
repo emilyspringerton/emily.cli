@@ -54,6 +54,7 @@ func kanbanClient() (*iduna.Client, int) {
 func runKanbanList(args []string) int {
 	fs := flag.NewFlagSet("kanban list", flag.ContinueOnError)
 	queue := fs.String("queue", "", "filter to one queue: backlog, priority, cruise (default: all)")
+	search := fs.String("search", "", "plain substring search over each card's own title and backlog id (kanban card 3454325)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -61,7 +62,7 @@ func runKanbanList(args []string) int {
 	if client == nil {
 		return code
 	}
-	cards, err := client.ListKanbanCards(*queue)
+	cards, err := client.ListKanbanCards(*queue, *search)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "emily kanban list: %v\n", err)
 		return 1

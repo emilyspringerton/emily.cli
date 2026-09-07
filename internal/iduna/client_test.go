@@ -367,7 +367,7 @@ func TestKanban_AddListMoveDelete_RealRoundTrip(t *testing.T) {
 		t.Fatalf("AddKanbanCard: %v", err)
 	}
 
-	cards, err := c.ListKanbanCards("")
+	cards, err := c.ListKanbanCards("", "")
 	if err != nil {
 		t.Fatalf("ListKanbanCards: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestKanban_AddListMoveDelete_RealRoundTrip(t *testing.T) {
 	if err := c.MoveKanbanCard(id, "priority"); err != nil {
 		t.Fatalf("MoveKanbanCard: %v", err)
 	}
-	priorityCards, err := c.ListKanbanCards("priority")
+	priorityCards, err := c.ListKanbanCards("priority", "")
 	if err != nil {
 		t.Fatalf("ListKanbanCards(priority): %v", err)
 	}
@@ -389,7 +389,7 @@ func TestKanban_AddListMoveDelete_RealRoundTrip(t *testing.T) {
 	if err := c.DeleteKanbanCard(id); err != nil {
 		t.Fatalf("DeleteKanbanCard: %v", err)
 	}
-	remaining, err := c.ListKanbanCards("")
+	remaining, err := c.ListKanbanCards("", "")
 	if err != nil {
 		t.Fatalf("ListKanbanCards after delete: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestKanban_AddWithExplicitQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddKanbanCard: %v", err)
 	}
-	cards, _ := c.ListKanbanCards("cruise")
+	cards, _ := c.ListKanbanCards("cruise", "")
 	if len(cards) != 1 || cards[0].ID != id {
 		t.Fatalf("expected the new card directly in the cruise queue, got %+v", cards)
 	}
