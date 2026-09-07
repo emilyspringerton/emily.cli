@@ -1,3 +1,7 @@
+## 2026-09-07
+
+- New -search flag for 'emily kanban list', wired to IDUNA's new ?q= kanban search param. (sess-20260905-0720-ec33e7c5)
+
 ## 2026-09-03
 
 - New `promptoverse hat` style registered in `promptoverseStyles` (kanban `HSG-000`: "promptoverse
