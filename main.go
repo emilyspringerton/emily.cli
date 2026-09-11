@@ -77,6 +77,8 @@ func main() {
 		code = cmd.RunTUI(rest)
 	case "backlog":
 		code = cmd.RunBacklog(rest)
+	case "ops":
+		code = cmd.RunOps(rest)
 	case "changelog":
 		code = cmd.RunChangelog(rest)
 	case "context":
@@ -325,6 +327,21 @@ Examples:
   emily agents              # all agents, last 200 apples
   emily agents --since 60   # agents active in the last hour
   emily agents --json       # JSON for scripts/piping
+`)
+	case "ops":
+		fmt.Print(`emily ops — render standardized backend-service systemd units from a real
+ops/playbook.toml (see EMILY/docs/PARENACLOUD_OPS_NORTHSTAR.md for the full format spec).
+
+Subcommands:
+  emily ops render-unit <playbook.toml> <service-name> <working-dir>
+      Renders one persistent [[service]] to real systemd unit file text on stdout. Does NOT
+      write to ~/.config/systemd/user/ or touch systemctl -- pipe the output yourself, e.g.:
+        emily ops render-unit ECOWAR/ops/playbook.toml matchmaker /home/fatbaby/ECOWAR \
+          > ~/.config/systemd/user/ecowar-matchmaker.service
+
+Examples:
+  emily ops render-unit ECOWAR/ops/playbook.toml matchmaker /home/fatbaby/ECOWAR
+  emily ops render-unit REDGARDEN/ops/playbook.toml bot-pool /home/fatbaby/REDGARDEN
 `)
 	case "backlog":
 		fmt.Print(`emily backlog — manage the golden backlog
