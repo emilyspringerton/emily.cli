@@ -1,4 +1,4 @@
-// cmd/backup.go — emily backup run [--target iduna|promptoverse|fatbaby|all]
+// cmd/backup.go — emily backup run [--target iduna|promptoverse|fatbaby|gfd|all]
 //
 // Founder direction: "ok can we start building s3 backup tools? fatbaby
 // backup" + "build it as google cloud first with s3 parity" + "we want to
@@ -119,6 +119,20 @@ func backupTargets(cfg *config.Config) []backupTarget {
 			},
 			Encrypt: false,
 		},
+		{
+			// GFD's real "data path" per SSH_TRANSPORT_IDENTITY_SPEC.md §5 (process isolation
+			// stage, GoblinFoxDragon/docs2/SSH_TRANSPORT_IDENTITY_NORTHSTAR.md Stage 3): the mud
+			// process's own writes are all under here (var/mud-chars.json name->character_id
+			// cache, var/mud-player-ids.json) -- the real, durable character/economy state lives
+			// in IDUNA's own DB (already covered by the "iduna" target above), this is just the
+			// telnet-side local cache + logs. Not encrypted, same reasoning as "fatbaby"/
+			// "promptoverse" -- the one real credential file in here
+			// (var/moltbook-credentials.json) is caught by looksLikeSecret's "credential" check
+			// above, not by leaving this target unencrypted.
+			Name:    "gfd",
+			Paths:   []string{"/home/fatbaby/GoblinFoxDragon/var"},
+			Encrypt: false,
+		},
 	}
 }
 
@@ -157,7 +171,7 @@ func RunBackup(args []string) int {
 			}
 		}
 		if len(selected) == 0 {
-			fmt.Fprintf(os.Stderr, "emily backup run: unknown --target %q (want iduna|promptoverse|fatbaby|all)\n", target)
+			fmt.Fprintf(os.Stderr, "emily backup run: unknown --target %q (want iduna|promptoverse|fatbaby|gfd|all)\n", target)
 			return 1
 		}
 	}
@@ -247,6 +261,13 @@ func looksLikeSecret(name string) bool {
 		return true
 	}
 	if strings.Contains(lower, "secret") {
+		return true
+	}
+	// "credential" check added 2026-09-12 scoping the new "gfd" target below: GoblinFoxDragon's
+	// var/moltbook-credentials.json is a real credential file that the pre-existing "secret"/
+	// ".env"/"webmaster.json" checks all miss -- would have been swept into an unencrypted cloud
+	// backup archive if this target were added without this fix.
+	if strings.Contains(lower, "credential") {
 		return true
 	}
 	if lower == "webmaster.json" {
@@ -452,13 +473,14 @@ func backupUsage() int {
 	fmt.Print(`emily backup — cloud backup for IDUNA/Prompt-o-verse/fatbaby data
 
 Subcommands:
-  emily backup run [--target iduna|promptoverse|fatbaby|all]   Archive + upload to GCS
+  emily backup run [--target iduna|promptoverse|fatbaby|gfd|all]   Archive + upload to GCS
   emily backup decrypt <encrypted-file> <output-file>          Decrypt an IDUNA backup archive
 
 Targets:
   iduna         IDUNA's SQLite stores (var/*.db) -- AES-256-GCM encrypted before upload
   promptoverse  Rendered gallery (images+HTML) + Prompt-o-verse JSON state, not encrypted
   fatbaby       Curated cross-repo var/ state (BACKLOG.md, EMILY/var, PRRJECT_FATBABY/var), not encrypted
+  gfd           GoblinFoxDragon/var (mud-chars/mud-player-ids caches, not the real IDUNA-backed data), not encrypted
 
 Bucket: ` + backupBucket + ` (us-central1, 30-day retention lifecycle)
 

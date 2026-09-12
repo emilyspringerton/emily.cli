@@ -9,22 +9,52 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/emilyspringerton/emily-cli/internal/config"
 )
 
 func TestLooksLikeSecret(t *testing.T) {
 	cases := map[string]bool{
-		"agent-secrets.env": true,
-		"secrets.env":       true,
-		"webmaster.json":    true,
-		"AGENT-SECRETS.ENV": true, // case-insensitive
-		"truestore.db":      false,
-		"promptoverse.db":   false,
-		"BACKLOG.md":        false,
+		"agent-secrets.env":         true,
+		"secrets.env":               true,
+		"webmaster.json":            true,
+		"AGENT-SECRETS.ENV":         true, // case-insensitive
+		"moltbook-credentials.json": true, // gfd target (2026-09-12) -- real creds, missed the pre-existing checks
+		"MOLTBOOK-CREDENTIALS.JSON": true, // case-insensitive
+		"truestore.db":              false,
+		"promptoverse.db":           false,
+		"BACKLOG.md":                false,
+		"mud-chars.json":            false,
 	}
 	for name, want := range cases {
 		if got := looksLikeSecret(name); got != want {
 			t.Errorf("looksLikeSecret(%q) = %v, want %v", name, got, want)
 		}
+	}
+}
+
+// TestBackupTargets_GFDTargetPointsAtGFDVarAndIsFiltered guards two things at once (2026-09-12,
+// SSH_TRANSPORT_IDENTITY_SPEC.md §5 / Stage 3's own "data path is backed up" requirement): the
+// "gfd" target exists and points at the real data path (GoblinFoxDragon/var, not the whole repo
+// -- source is already safe in git), and it is NOT the encrypted target (matching fatbaby/
+// promptoverse, not iduna -- the one real credential file in that tree is excluded by
+// looksLikeSecret above, not by encryption).
+func TestBackupTargets_GFDTargetPointsAtGFDVarAndIsFiltered(t *testing.T) {
+	targets := backupTargets(&config.Config{})
+	var found *backupTarget
+	for i := range targets {
+		if targets[i].Name == "gfd" {
+			found = &targets[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("backupTargets: no \"gfd\" target found")
+	}
+	if found.Encrypt {
+		t.Error("gfd target should not be encrypted (matches fatbaby/promptoverse convention)")
+	}
+	if len(found.Paths) != 1 || found.Paths[0] != "/home/fatbaby/GoblinFoxDragon/var" {
+		t.Errorf("gfd target Paths = %v, want exactly [/home/fatbaby/GoblinFoxDragon/var]", found.Paths)
 	}
 }
 
