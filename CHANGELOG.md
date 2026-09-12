@@ -1,3 +1,7 @@
+## 2026-09-12
+
+- backup: add encrypted 'gfd-secrets' target for ~/.config/gfd-mud/env -- the one credential (IDUNA_AGENT_NAME/SECRET) gfd-mud.service needs to talk to IDUNA, previously covered by no backup target at all (the plain 'gfd' target only ever pointed at GoblinFoxDragon/var). AES-256-GCM encrypted, same shared key as the 'iduna' target. Closes the follow-up flagged in EMILY/BACKLOG.md SECTION 402. Live-verified: archives + encrypts the real file correctly (235-byte ciphertext); the final gcloud upload leg couldn't be confirmed against the live bucket this session -- gcloud has no active authenticated account in this environment right now (a separate, pre-existing gap, not caused by this change -- every other backup target would hit the identical 'gcloud auth login' failure). (sess-20260905-0720-ec33e7c5)
+
 ## 2026-09-07
 
 - New -search flag for 'emily kanban list', wired to IDUNA's new ?q= kanban search param. (sess-20260905-0720-ec33e7c5)
