@@ -133,7 +133,36 @@ func backupTargets(cfg *config.Config) []backupTarget {
 			Paths:   []string{"/home/fatbaby/GoblinFoxDragon/var"},
 			Encrypt: false,
 		},
+		{
+			// Real, found-live gap (2026-09-12, GFD SSH login incident, EMILY/BACKLOG.md
+			// SECTION 402): ~/.config/gfd-mud/env holds the ONE credential
+			// (IDUNA_AGENT_NAME/IDUNA_AGENT_SECRET) that lets gfd-mud.service talk to IDUNA at
+			// all -- every character fetch/create/gold/position sync depends on it. It lives
+			// outside this repo entirely (correctly, it's a secret) and so was never covered by
+			// the "gfd" target above (which only ever pointed at GoblinFoxDragon/var). When this
+			// box's $HOME state got reset, this file silently vanished with nothing to restore
+			// it from, and every real SSH login started 401ing invisibly until it surfaced as an
+			// incorrect guest-mode fallback. A dedicated, ENCRYPTED target -- same reasoning as
+			// "iduna" above, a real credential, not curated app state -- fixes the actual gap
+			// rather than folding this into the existing unencrypted "gfd" target.
+			Name:    "gfd-secrets",
+			Paths:   []string{gfdMudEnvPath()},
+			Encrypt: true,
+		},
 	}
+}
+
+// gfdMudEnvPath is split out so a future non-default $HOME (or a test) can override it without
+// touching backupTargets' own literal list -- matches idunaRoot()'s own env-override shape.
+func gfdMudEnvPath() string {
+	if v := os.Getenv("GFD_MUD_ENV_PATH"); v != "" {
+		return v
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "/home/fatbaby"
+	}
+	return filepath.Join(home, ".config", "gfd-mud", "env")
 }
 
 func RunBackup(args []string) int {
@@ -171,7 +200,7 @@ func RunBackup(args []string) int {
 			}
 		}
 		if len(selected) == 0 {
-			fmt.Fprintf(os.Stderr, "emily backup run: unknown --target %q (want iduna|promptoverse|fatbaby|gfd|all)\n", target)
+			fmt.Fprintf(os.Stderr, "emily backup run: unknown --target %q (want iduna|promptoverse|fatbaby|gfd|gfd-secrets|all)\n", target)
 			return 1
 		}
 	}
@@ -473,20 +502,25 @@ func backupUsage() int {
 	fmt.Print(`emily backup — cloud backup for IDUNA/Prompt-o-verse/fatbaby data
 
 Subcommands:
-  emily backup run [--target iduna|promptoverse|fatbaby|gfd|all]   Archive + upload to GCS
-  emily backup decrypt <encrypted-file> <output-file>          Decrypt an IDUNA backup archive
+  emily backup run [--target iduna|promptoverse|fatbaby|gfd|gfd-secrets|all]  Archive + upload to GCS
+  emily backup decrypt <encrypted-file> <output-file>          Decrypt an encrypted backup archive
 
 Targets:
   iduna         IDUNA's SQLite stores (var/*.db) -- AES-256-GCM encrypted before upload
   promptoverse  Rendered gallery (images+HTML) + Prompt-o-verse JSON state, not encrypted
   fatbaby       Curated cross-repo var/ state (BACKLOG.md, EMILY/var, PRRJECT_FATBABY/var), not encrypted
   gfd           GoblinFoxDragon/var (mud-chars/mud-player-ids caches, not the real IDUNA-backed data), not encrypted
+  gfd-secrets   ~/.config/gfd-mud/env (IDUNA_AGENT_NAME/SECRET gfd-mud.service needs to talk to
+                IDUNA at all) -- AES-256-GCM encrypted before upload, same key as "iduna". To
+                restore after a $HOME reset: decrypt, untar, then copy the recovered "env" file
+                back to ~/.config/gfd-mud/env yourself (0600) -- this tool does not write outside
+                a temp dir on its own.
 
 Bucket: ` + backupBucket + ` (us-central1, 30-day retention lifecycle)
 
-The IDUNA target's encryption key lives at IDUNA_ROOT/var/` + backupKeyFileName + `
+The encrypted targets' key lives at IDUNA_ROOT/var/` + backupKeyFileName + `
 (0600), generated on first use, and is NEVER uploaded to the bucket. Back it up
-yourself, somewhere else -- losing it makes existing encrypted backups unrecoverable.
+yourself, somewhere else -- losing it makes every existing encrypted backup unrecoverable.
 `)
 	return 1
 }

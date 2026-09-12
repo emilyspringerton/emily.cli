@@ -58,6 +58,60 @@ func TestBackupTargets_GFDTargetPointsAtGFDVarAndIsFiltered(t *testing.T) {
 	}
 }
 
+// TestBackupTargets_GFDSecretsTargetIsEncryptedAndRespectsOverride guards the fix for the real,
+// found-live gap (2026-09-12, EMILY/BACKLOG.md SECTION 402): ~/.config/gfd-mud/env had no backup
+// coverage anywhere -- neither the "gfd" target (only ever GoblinFoxDragon/var) nor anything else
+// -- and silently vanished on a $HOME reset, breaking every real SSH login until it surfaced as
+// an incorrect guest-mode fallback. The new "gfd-secrets" target must exist, must be encrypted
+// (this is a real credential, same class as "iduna"'s own targets, not curated app state), and
+// must honor GFD_MUD_ENV_PATH so a test (or a future non-default $HOME) never hardcodes
+// /home/fatbaby.
+func TestBackupTargets_GFDSecretsTargetIsEncryptedAndRespectsOverride(t *testing.T) {
+	t.Setenv("GFD_MUD_ENV_PATH", "/tmp/fake-gfd-mud-env-for-test")
+	targets := backupTargets(&config.Config{})
+	var found *backupTarget
+	for i := range targets {
+		if targets[i].Name == "gfd-secrets" {
+			found = &targets[i]
+		}
+	}
+	if found == nil {
+		t.Fatal(`backupTargets: no "gfd-secrets" target found`)
+	}
+	if !found.Encrypt {
+		t.Error("gfd-secrets target must be encrypted -- it holds a real IDUNA agent credential")
+	}
+	if len(found.Paths) != 1 || found.Paths[0] != "/tmp/fake-gfd-mud-env-for-test" {
+		t.Errorf("gfd-secrets target Paths = %v, want exactly the GFD_MUD_ENV_PATH override", found.Paths)
+	}
+}
+
+// TestGFDMudEnvPath_DefaultsUnderHomeConfig guards the real default path (no env override) --
+// the exact file gfd-mud.service's own EnvironmentFile= line reads, so a drift here would quietly
+// back up the wrong file.
+func TestGFDMudEnvPath_DefaultsUnderHomeConfig(t *testing.T) {
+	t.Setenv("GFD_MUD_ENV_PATH", "")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir resolvable in this environment")
+	}
+	want := filepath.Join(home, ".config", "gfd-mud", "env")
+	if got := gfdMudEnvPath(); got != want {
+		t.Errorf("gfdMudEnvPath() = %q, want %q", got, want)
+	}
+}
+
+// TestLooksLikeSecret_BareEnvFilenameIsNotFiltered guards a real, easy-to-miss edge case: the
+// gfd-secrets target's own file is literally named "env" (no leading dot), not "*.env" --
+// looksLikeSecret's own ".env" suffix check must NOT match it, or tarGzPaths would silently
+// exclude the one file the whole "gfd-secrets" target exists to back up, defeating the fix while
+// looking like it worked (the archive would just be empty).
+func TestLooksLikeSecret_BareEnvFilenameIsNotFiltered(t *testing.T) {
+	if looksLikeSecret("env") {
+		t.Error(`looksLikeSecret("env") = true -- this would silently empty out the gfd-secrets backup target`)
+	}
+}
+
 func tarEntryNames(t *testing.T, path string) []string {
 	t.Helper()
 	f, err := os.Open(path)
