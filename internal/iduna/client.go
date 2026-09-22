@@ -286,11 +286,12 @@ func (c *Client) ListKanbanCards(queue, search string) ([]KanbanCard, error) {
 	return cards, nil
 }
 
-// AddKanbanCard creates a card (queue "" defaults to "backlog" server-side)
-// and returns its new id.
-func (c *Client) AddKanbanCard(backlogItemID, title, queue string) (int64, error) {
+// AddKanbanCard creates a card (queue "" defaults to "backlog" server-side). backlogItemID may be "" -- IDUNA auto-generates a random ticket
+// number server-side in that case (kanban card 82821821) -- so the returned backlogItemID is the
+// real, resolved value the server actually assigned, not necessarily the input.
+func (c *Client) AddKanbanCard(backlogItemID, title, queue string) (id int64, resolvedBacklogItemID string, err error) {
 	if err := c.Auth(); err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	payload := map[string]string{"backlog_item_id": backlogItemID, "title": title}
 	if queue != "" {
@@ -303,20 +304,21 @@ func (c *Client) AddKanbanCard(backlogItemID, title, queue string) (int64, error
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("add kanban card: %w", err)
+		return 0, "", fmt.Errorf("add kanban card: %w", err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode != http.StatusCreated {
-		return 0, fmt.Errorf("add kanban card %d: %s", resp.StatusCode, trimMsg(raw))
+		return 0, "", fmt.Errorf("add kanban card %d: %s", resp.StatusCode, trimMsg(raw))
 	}
 	var result struct {
-		ID int64 `json:"id"`
+		ID            int64  `json:"id"`
+		BacklogItemID string `json:"backlog_item_id"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return 0, fmt.Errorf("add kanban card decode: %w", err)
+		return 0, "", fmt.Errorf("add kanban card decode: %w", err)
 	}
-	return result.ID, nil
+	return result.ID, result.BacklogItemID, nil
 }
 
 // MoveKanbanCard changes a card's queue (the "drag" action) -- id is the

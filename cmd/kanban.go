@@ -83,22 +83,33 @@ func runKanbanAdd(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() < 2 {
-		fmt.Fprintln(os.Stderr, "usage: emily kanban add [--queue priority|cruise] <backlog-item-id> <title>")
+	// Kanban card 82821821 (founder real-time): "i dont want to type ticket numbers if i dont
+	// want to ... sometimes its too much cognitive load". A single positional arg is now
+	// title-only -- the id is left blank and auto-generated server-side. The original two-arg
+	// form (explicit id + title, the "sometimes I do want to, like jira projects" half of the
+	// same ask) still works exactly as before.
+	var backlogItemID, title string
+	switch fs.NArg() {
+	case 1:
+		title = fs.Arg(0)
+	case 2:
+		backlogItemID = fs.Arg(0)
+		title = fs.Arg(1)
+	default:
+		fmt.Fprintln(os.Stderr, "usage: emily kanban add [--queue priority|cruise] [<backlog-item-id>] <title>")
+		fmt.Fprintln(os.Stderr, "       (omit <backlog-item-id> to auto-generate a ticket number)")
 		return 1
 	}
-	backlogItemID := fs.Arg(0)
-	title := fs.Arg(1)
 	client, code := kanbanClient()
 	if client == nil {
 		return code
 	}
-	id, err := client.AddKanbanCard(backlogItemID, title, *queue)
+	id, resolvedID, err := client.AddKanbanCard(backlogItemID, title, *queue)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "emily kanban add: %v\n", err)
 		return 1
 	}
-	fmt.Printf("✓ card #%d added (%s)\n", id, backlogItemID)
+	fmt.Printf("✓ card #%d added (%s)\n", id, resolvedID)
 	return 0
 }
 

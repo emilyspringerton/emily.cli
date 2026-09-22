@@ -86,9 +86,14 @@ func mockServer(t *testing.T) *httptest.Server {
 				Queue         string `json:"queue"`
 			}
 			json.NewDecoder(r.Body).Decode(&body)
-			if body.BacklogItemID == "" || body.Title == "" {
-				http.Error(w, `{"error":"backlog_item_id and title required"}`, http.StatusBadRequest)
+			if body.Title == "" {
+				http.Error(w, `{"error":"title required"}`, http.StatusBadRequest)
 				return
+			}
+			if body.BacklogItemID == "" {
+				// Mirrors IDUNA's own real auto-generation (kanban card 82821821): a blank id
+				// gets a random-looking ticket number rather than being rejected.
+				body.BacklogItemID = fmt.Sprintf("T%08d", kanbanNextID*10000007%100_000_000)
 			}
 			if body.Queue == "" {
 				body.Queue = "backlog"
@@ -97,7 +102,7 @@ func mockServer(t *testing.T) *httptest.Server {
 			kanbanNextID++
 			kanbanCards[id] = &iduna.KanbanCard{ID: id, BacklogItemID: body.BacklogItemID, Title: body.Title, Queue: body.Queue}
 			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(map[string]int64{"id": id})
+			json.NewEncoder(w).Encode(map[string]any{"id": id, "backlog_item_id": body.BacklogItemID})
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -362,9 +367,12 @@ func TestKanban_AddListMoveDelete_RealRoundTrip(t *testing.T) {
 	defer srv.Close()
 	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
 
-	id, err := c.AddKanbanCard("S202-27", "Body blocking", "")
+	id, resolvedID, err := c.AddKanbanCard("S202-27", "Body blocking", "")
 	if err != nil {
 		t.Fatalf("AddKanbanCard: %v", err)
+	}
+	if resolvedID != "S202-27" {
+		t.Fatalf("expected the explicit backlog_item_id to be echoed back unchanged, got %q", resolvedID)
 	}
 
 	cards, err := c.ListKanbanCards("", "")
@@ -403,7 +411,7 @@ func TestKanban_AddWithExplicitQueue(t *testing.T) {
 	defer srv.Close()
 	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
 
-	id, err := c.AddKanbanCard("S202-28", "Ant hero rig", "cruise")
+	id, _, err := c.AddKanbanCard("S202-28", "Ant hero rig", "cruise")
 	if err != nil {
 		t.Fatalf("AddKanbanCard: %v", err)
 	}
@@ -413,13 +421,43 @@ func TestKanban_AddWithExplicitQueue(t *testing.T) {
 	}
 }
 
-func TestKanban_AddRejectsEmptyFields(t *testing.T) {
+func TestKanban_AddRejectsEmptyTitle(t *testing.T) {
 	srv := mockServer(t)
 	defer srv.Close()
 	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
 
-	if _, err := c.AddKanbanCard("", "no id", ""); err == nil {
-		t.Error("expected an error for an empty backlog_item_id")
+	if _, _, err := c.AddKanbanCard("S202-29", "", ""); err == nil {
+		t.Error("expected an error for an empty title")
+	}
+}
+
+// TestKanban_AddWithBlankIDAutoGenerates -- kanban card 82821821 ("i dont want to type ticket
+// numbers if i dont want to"): a blank backlog_item_id is no longer rejected, it's auto-assigned
+// server-side, and the caller gets the real resolved id back.
+func TestKanban_AddWithBlankIDAutoGenerates(t *testing.T) {
+	srv := mockServer(t)
+	defer srv.Close()
+	c := iduna.New(srv.URL, "EMILY-PRIME", "correct-secret")
+
+	id, resolvedID, err := c.AddKanbanCard("", "no id typed", "")
+	if err != nil {
+		t.Fatalf("AddKanbanCard with blank id: %v", err)
+	}
+	if resolvedID == "" {
+		t.Fatal("expected a non-empty auto-generated backlog_item_id")
+	}
+	cards, err := c.ListKanbanCards("", "")
+	if err != nil {
+		t.Fatalf("ListKanbanCards: %v", err)
+	}
+	found := false
+	for _, card := range cards {
+		if card.ID == id && card.BacklogItemID == resolvedID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected the auto-generated id to round-trip through list, got %+v", cards)
 	}
 }
 
