@@ -1,3 +1,7 @@
+## 2026-09-23
+
+- docs: add GEMINI.md guidance for Gemini / Antigravity pair programming
+
 ## 2026-09-22
 
 - kanban: 'emily kanban add <title>' (single arg) now auto-generates a ticket number; AddKanbanCard returns the resolved backlog_item_id (sess-20260920-1908-24cb3558)
