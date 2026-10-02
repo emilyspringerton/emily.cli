@@ -344,6 +344,64 @@ func (c *Client) MoveKanbanCard(id int64, queue string) error {
 	return nil
 }
 
+// KanbanComment is one comment on a kanban card; Author is the poster's login as IDUNA recorded it.
+type KanbanComment struct {
+	ID        int64  `json:"id"`
+	CardID    int64  `json:"card_id"`
+	Author    string `json:"author"`
+	AuthorSub string `json:"author_sub"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ListKanbanComments returns a card's comments, oldest first.
+func (c *Client) ListKanbanComments(cardID int64) ([]KanbanComment, error) {
+	if err := c.Auth(); err != nil {
+		return nil, err
+	}
+	req, _ := http.NewRequest("GET", c.BaseURL+"/api/v1/kanban/cards/"+strconv.FormatInt(cardID, 10)+"/comments", nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list kanban comments: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list kanban comments %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+	var out []KanbanComment
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("list kanban comments: %w", err)
+	}
+	return out, nil
+}
+
+// AddKanbanComment posts a comment on a card; IDUNA stamps the author from this client's own token.
+func (c *Client) AddKanbanComment(cardID int64, text string) (*KanbanComment, error) {
+	if err := c.Auth(); err != nil {
+		return nil, err
+	}
+	body, _ := json.Marshal(map[string]string{"body": text})
+	req, _ := http.NewRequest("POST", c.BaseURL+"/api/v1/kanban/cards/"+strconv.FormatInt(cardID, 10)+"/comments", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("add kanban comment: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("add kanban comment %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+	var out KanbanComment
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("add kanban comment: %w", err)
+	}
+	return &out, nil
+}
+
 // DeleteKanbanCard removes a card from the board entirely (BACKLOG.md
 // itself is never touched -- this only ever affects this tracking layer).
 func (c *Client) DeleteKanbanCard(id int64) error {

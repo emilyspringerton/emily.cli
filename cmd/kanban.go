@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/emilyspringerton/emily-cli/internal/config"
 	"github.com/emilyspringerton/emily-cli/internal/iduna"
@@ -20,7 +21,7 @@ import (
 // RunKanban dispatches emily kanban subcommands.
 func RunKanban(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "emily kanban: missing subcommand. Try: list, add, move, rm")
+		fmt.Fprintln(os.Stderr, "emily kanban: missing subcommand. Try: list, add, move, rm, comment, comments")
 		return 1
 	}
 	switch args[0] {
@@ -32,8 +33,12 @@ func RunKanban(args []string) int {
 		return runKanbanMove(args[1:])
 	case "rm":
 		return runKanbanRemove(args[1:])
+	case "comment":
+		return runKanbanComment(args[1:])
+	case "comments":
+		return runKanbanComments(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "emily kanban: unknown subcommand %q — try: list, add, move, rm\n", args[0])
+		fmt.Fprintf(os.Stderr, "emily kanban: unknown subcommand %q — try: list, add, move, rm, comment, comments\n", args[0])
 		return 1
 	}
 }
@@ -155,5 +160,60 @@ func runKanbanRemove(args []string) int {
 		return 1
 	}
 	fmt.Printf("✓ card #%d removed\n", id)
+	return 0
+}
+
+// runKanbanComment: `emily kanban comment <card-id> <text...>` -- leave a question (or reply) on a card.
+// IDUNA records the author from this CLI's own login, so a board user's reply is attributed to them.
+func runKanbanComment(args []string) int {
+	var id int64
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: emily kanban comment <card-id> <text>")
+		return 1
+	}
+	if _, err := fmt.Sscanf(args[0], "%d", &id); err != nil || id <= 0 {
+		fmt.Fprintf(os.Stderr, "emily kanban comment: invalid card id %q\n", args[0])
+		return 1
+	}
+	client, code := kanbanClient()
+	if client == nil {
+		return code
+	}
+	c, err := client.AddKanbanComment(id, strings.Join(args[1:], " "))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "emily kanban comment: %v\n", err)
+		return 1
+	}
+	fmt.Printf("✓ comment #%d on card #%d as %s\n", c.ID, id, c.Author)
+	return 0
+}
+
+// runKanbanComments: `emily kanban comments <card-id>` -- read the thread (find the replies to your questions).
+func runKanbanComments(args []string) int {
+	var id int64
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: emily kanban comments <card-id>")
+		return 1
+	}
+	if _, err := fmt.Sscanf(args[0], "%d", &id); err != nil || id <= 0 {
+		fmt.Fprintf(os.Stderr, "emily kanban comments: invalid card id %q\n", args[0])
+		return 1
+	}
+	client, code := kanbanClient()
+	if client == nil {
+		return code
+	}
+	items, err := client.ListKanbanComments(id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "emily kanban comments: %v\n", err)
+		return 1
+	}
+	if len(items) == 0 {
+		fmt.Printf("card #%d has no comments\n", id)
+		return 0
+	}
+	for _, c := range items {
+		fmt.Printf("[%s] %s: %s\n", c.CreatedAt, c.Author, c.Body)
+	}
 	return 0
 }
