@@ -1,4 +1,5 @@
 ## 2026-10-02
+- kanban: comment <id> <text> and comments <id> (card #514) (sess-20260923-1030-4a526255)
 
 - kanban: list/add/move accept the pending queue (and move ... done) (sess-20260923-1030-4a526255)
 
