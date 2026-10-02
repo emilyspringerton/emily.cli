@@ -53,7 +53,7 @@ func kanbanClient() (*iduna.Client, int) {
 
 func runKanbanList(args []string) int {
 	fs := flag.NewFlagSet("kanban list", flag.ContinueOnError)
-	queue := fs.String("queue", "", "filter to one queue: backlog, priority, cruise (default: all)")
+	queue := fs.String("queue", "", "filter to one queue: backlog, priority, pending, cruise (default: all)")
 	search := fs.String("search", "", "plain substring search over each card's own title and backlog id (kanban card 3454325)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -79,7 +79,7 @@ func runKanbanList(args []string) int {
 
 func runKanbanAdd(args []string) int {
 	fs := flag.NewFlagSet("kanban add", flag.ContinueOnError)
-	queue := fs.String("queue", "", "backlog (default), priority, or cruise")
+	queue := fs.String("queue", "", "backlog (default), priority, pending, or cruise")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -96,7 +96,7 @@ func runKanbanAdd(args []string) int {
 		backlogItemID = fs.Arg(0)
 		title = fs.Arg(1)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: emily kanban add [--queue priority|cruise] [<backlog-item-id>] <title>")
+		fmt.Fprintln(os.Stderr, "usage: emily kanban add [--queue priority|pending|cruise] [<backlog-item-id>] <title>")
 		fmt.Fprintln(os.Stderr, "       (omit <backlog-item-id> to auto-generate a ticket number)")
 		return 1
 	}
@@ -115,7 +115,7 @@ func runKanbanAdd(args []string) int {
 
 func runKanbanMove(args []string) int {
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: emily kanban move <card-id> <backlog|priority|cruise>")
+		fmt.Fprintln(os.Stderr, "usage: emily kanban move <card-id> <backlog|priority|pending|cruise|done>")
 		return 1
 	}
 	var id int64

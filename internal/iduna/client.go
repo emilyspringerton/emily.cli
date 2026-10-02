@@ -248,7 +248,7 @@ type KanbanCard struct {
 }
 
 // ListKanbanCards returns cards, optionally filtered to one queue
-// ("backlog", "priority", "cruise") and/or a plain substring search over each card's own title
+// ("backlog", "priority", "pending", "cruise") and/or a plain substring search over each card's own title
 // and backlog_item_id (kanban card 3454325, "kanban search (filter)" -- the CLI/API surface's
 // own real gap, distinct from the admin web UI's already-existing client-side quick-filter,
 // IDUXN-003). Pass "" for either to leave that filter off.
