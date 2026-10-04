@@ -375,7 +375,39 @@ func addTarEntry(tw *tar.Writer, fullPath, relPath string, info os.FileInfo) err
 	if !info.Mode().IsRegular() {
 		return nil // skip symlinks/sockets/etc -- not expected in these targets, safe to ignore if present
 	}
-	hdr, err := tar.FileInfoHeader(info, "")
+	srcPath := fullPath
+	if strings.HasSuffix(fullPath, ".db") {
+		// Live SQLite store: a plain file copy can tear mid-write (and grows under us, which is
+		// what broke the tar header size -- "write too long"). Take a consistent snapshot via
+		// sqlite3's online backup instead, then archive the snapshot.
+		snap, err := os.CreateTemp("", "emily-backup-snap-*.db")
+		if err != nil {
+			return err
+		}
+		snap.Close()
+		defer os.Remove(snap.Name())
+		os.Remove(snap.Name()) // sqlite3 .backup wants to create it itself
+		if out, err := exec.Command("sqlite3", fullPath, ".backup '"+snap.Name()+"'").CombinedOutput(); err != nil {
+			// Not a real SQLite file (or sqlite3 unavailable): fall back to the size-capped plain copy.
+			fmt.Fprintf(os.Stderr, "  warning: sqlite3 snapshot of %s failed (%s); archiving raw bytes\n", fullPath, strings.TrimSpace(string(out)))
+		} else {
+			srcPath = snap.Name()
+		}
+	} else if strings.HasSuffix(fullPath, ".db-wal") || strings.HasSuffix(fullPath, ".db-shm") {
+		return nil // folded into the .db snapshot above
+	}
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	// Header size comes from the OPEN handle and the copy is capped to it: append-only files
+	// (ndjson, logs) can grow between Walk's stat and the read, which otherwise aborts the tar.
+	fi, err := src.Stat()
+	if err != nil {
+		return err
+	}
+	hdr, err := tar.FileInfoHeader(fi, "")
 	if err != nil {
 		return err
 	}
@@ -383,12 +415,7 @@ func addTarEntry(tw *tar.Writer, fullPath, relPath string, info os.FileInfo) err
 	if err := tw.WriteHeader(hdr); err != nil {
 		return err
 	}
-	src, err := os.Open(fullPath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-	_, err = io.Copy(tw, src)
+	_, err = io.CopyN(tw, src, hdr.Size)
 	return err
 }
 
