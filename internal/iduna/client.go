@@ -286,6 +286,44 @@ func (c *Client) ListKanbanCards(queue, search string) ([]KanbanCard, error) {
 	return cards, nil
 }
 
+// KanbanInboxItem mirrors IDUNA's backlog.Item (internal/backlog/parse.go) as served by
+// GET /api/v1/kanban/inbox: a real, open ("- [ ]") EMILY/BACKLOG.md line that has no
+// kanban_cards row yet. This is the "what's left to triage" half of working from kanban --
+// ListKanbanCards alone only shows items someone already carded.
+type KanbanInboxItem struct {
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	Checked      bool   `json:"checked"`
+	Section      int    `json:"section"`
+	SectionTitle string `json:"section_title"`
+	Line         int    `json:"line"`
+}
+
+// ListKanbanInbox returns BACKLOG.md items with no kanban card yet (always open/unchecked --
+// the server already filters those out). Same kanban.access permission as the cards endpoints.
+func (c *Client) ListKanbanInbox() ([]KanbanInboxItem, error) {
+	if err := c.Auth(); err != nil {
+		return nil, err
+	}
+	req, _ := http.NewRequest("GET", c.BaseURL+"/api/v1/kanban/inbox", nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list kanban inbox: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list kanban inbox %d: %s", resp.StatusCode, trimMsg(raw))
+	}
+	var items []KanbanInboxItem
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, fmt.Errorf("list kanban inbox decode: %w", err)
+	}
+	return items, nil
+}
+
 // AddKanbanCard creates a card (queue "" defaults to "backlog" server-side). backlogItemID may be "" -- IDUNA auto-generates a random ticket
 // number server-side in that case (kanban card 82821821) -- so the returned backlogItemID is the
 // real, resolved value the server actually assigned, not necessarily the input.

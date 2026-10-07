@@ -1,4 +1,4 @@
-// cmd/kanban.go — emily kanban {list|add|move|rm}
+// cmd/kanban.go — emily kanban {list|inbox|add|move|rm}
 //
 // CLI/agent half of the kanban prioritization layer (see IDUNA's
 // internal/http/handlers/kanban.go for the full founder-quote chain and
@@ -21,12 +21,14 @@ import (
 // RunKanban dispatches emily kanban subcommands.
 func RunKanban(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "emily kanban: missing subcommand. Try: list, add, move, rm, comment, comments")
+		fmt.Fprintln(os.Stderr, "emily kanban: missing subcommand. Try: list, inbox, add, move, rm, comment, comments")
 		return 1
 	}
 	switch args[0] {
 	case "list":
 		return runKanbanList(args[1:])
+	case "inbox":
+		return runKanbanInbox(args[1:])
 	case "add":
 		return runKanbanAdd(args[1:])
 	case "move":
@@ -38,7 +40,7 @@ func RunKanban(args []string) int {
 	case "comments":
 		return runKanbanComments(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "emily kanban: unknown subcommand %q — try: list, add, move, rm, comment, comments\n", args[0])
+		fmt.Fprintf(os.Stderr, "emily kanban: unknown subcommand %q — try: list, inbox, add, move, rm, comment, comments\n", args[0])
 		return 1
 	}
 }
@@ -78,6 +80,33 @@ func runKanbanList(args []string) int {
 	}
 	for _, c := range cards {
 		fmt.Printf("  #%-4d [%-8s] %-14s %s\n", c.ID, c.Queue, c.BacklogItemID, c.Title)
+	}
+	return 0
+}
+
+// runKanbanInbox lists real, open BACKLOG.md items that have no kanban card yet -- the
+// "what's left to triage" half of working from kanban (`emily kanban list` alone only
+// shows items someone already carded; the inbox is where a next real card comes from).
+func runKanbanInbox(args []string) int {
+	fs := flag.NewFlagSet("kanban inbox", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	client, code := kanbanClient()
+	if client == nil {
+		return code
+	}
+	items, err := client.ListKanbanInbox()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "emily kanban inbox: %v\n", err)
+		return 1
+	}
+	if len(items) == 0 {
+		fmt.Println("(inbox empty — every open BACKLOG.md item already has a card)")
+		return 0
+	}
+	for _, it := range items {
+		fmt.Printf("  %-10s [S%-4d] %s\n", it.ID, it.Section, it.Title)
 	}
 	return 0
 }
