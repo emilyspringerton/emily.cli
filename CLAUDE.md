@@ -7,7 +7,13 @@ flows through `emily` commands.
 ## Listening on
 
 CLI binary, no server port. Reads `IDUNA_BASE_URL` + `IDUNA_AGENT_SECRET` from env or
-`IDUNA/var/agent-secrets.env` (auto-discovered).
+`IDUNA/var/agent-secrets.env` (auto-discovered) — **but IDUNA itself now runs in Kubernetes**
+(GKE namespace `emily`, `svc/iduna`, no ingress), so from outside the cluster
+`IDUNA_BASE_URL=http://localhost:8080` only works after you
+`kubectl port-forward -n emily svc/iduna 8080:8080`, and the local `agent-secrets.env` this CLI
+auto-discovers can be stale — pull the current secret from the live pod
+(`kubectl exec -n emily deploy/iduna -- cat /app/var/agent-secrets.env`) if auth fails with
+`AGENT_AUTH_FAILED`. See root `CLAUDE.md`'s "Kubernetes Operations" section.
 
 ## Key Commands
 
