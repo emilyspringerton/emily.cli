@@ -9,6 +9,7 @@
 //
 //	emily coder work [-engine URL] [-dir WORKDIR] [-verify CMD] [-once]
 //	emily coder lesson add "text" | list | rm <id>      (the feedback loop)
+//	emily coder worker create                            (mint a least-privilege worker agent; secret shown once)
 //	emily coder tools                                    (tools + required permissions)
 package cmd
 
@@ -74,6 +75,8 @@ func RunCoder(args []string) int {
 	switch args[0] {
 	case "work":
 		return runCoderWork(args[1:])
+	case "worker":
+		return runCoderWorkerCreate(args[1:])
 	case "lesson":
 		return runCoderLesson(args[1:])
 	case "tools":
@@ -360,4 +363,34 @@ func (a *coderAgent) handle(w coderWork) bool {
 	}
 	a.report(w, "assistant", "", "(stopped: iteration limit reached without finish)")
 	return false
+}
+
+// runCoderWorkerCreate: `emily coder worker create` mints the identity `emily coder work` runs as.
+// It holds exactly coder.worker.claim + coder.worker.report; the caller needs coder.worker.provision.
+func runCoderWorkerCreate(args []string) int {
+	if len(args) == 0 || args[0] != "create" {
+		fmt.Fprintln(os.Stderr, "usage: emily coder worker create")
+		return 1
+	}
+	c, rc := coderClient()
+	if c == nil {
+		return rc
+	}
+	raw, _, err := c.CoderDo("POST", "/workers", map[string]string{})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	var d struct {
+		AgentName   string   `json:"agent_name"`
+		AgentSecret string   `json:"agent_secret"`
+		Permissions []string `json:"permissions"`
+	}
+	if json.Unmarshal(raw, &d) != nil || d.AgentSecret == "" {
+		fmt.Fprintln(os.Stderr, "unexpected response:", string(raw))
+		return 2
+	}
+	fmt.Printf("IDUNA_AGENT_NAME=%s\nIDUNA_AGENT_SECRET=%s\n# permissions: %s\n# shown once; run the worker with these exported: emily coder work\n",
+		d.AgentName, d.AgentSecret, strings.Join(d.Permissions, ", "))
+	return 0
 }

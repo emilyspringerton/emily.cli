@@ -216,6 +216,7 @@ Requires IDUNA_AGENT_SECRET for an agent with the blog.write permission (EMILY-P
 
   emily coder work [-engine URL] [-dir WORKDIR] [-verify 'go test ./...'] [-once]
   emily coder lesson add "text" | list | rm <id>     (the feedback loop: lessons go into its prompt)
+  emily coder worker create                          (mint the worker's least-privilege IDUNA agent; secret shown once)
   emily coder tools                                  (tools and the coder.tool.<name> permission each needs)
 
 work claims chat turns from IDUNA, runs a tool loop against the vLLM engine and reports every step back.
