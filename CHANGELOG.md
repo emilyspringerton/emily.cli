@@ -1,3 +1,7 @@
+## 2026-10-19
+
+- feat(coder): **`emily coder work|lesson|tools` -- the coder agent worker, powered by emily.cli** (founder real-time: "POWER THE WHOLE THING WITH emily.cli", "teach it how to read claude files", "teach it how to grep for things and sed for things"). `work` claims chat turns from IDUNA's coder API, runs a tool loop against the vLLM Qwen2.5-Coder engine (OpenAI tool calls) and reports every tool call and reply back to okemily.com/admin/coder. Tools are direct execs, never a shell: emily subcommands (observe, apples, changelog, backlog, status), `grep`, `sed` (always `--sandbox`: no e/w/r commands), `go` (build/vet/test/fmt/list), `git` (no push), `files`, `finish`. **CLAUDE.md/GEMINI.md are read into its behavior**: they are found walking up from the workdir (plus ~/.claude), the system prompt gets each file's heading outline plus the "operating protocol"/"Emily Way" sections, and the `claude_files` tool reads any other section on demand (the 8k-token engine can't hold a 488-line file). Each tool is gated by the sender's `coder.tool.<name>` permission, checked here and again by IDUNA. `lesson add|list|rm` is the feedback loop (lessons are injected into the prompt). Tests: split/confine/tool-gating/claude-file parsing/real grep+sed (incl. sed `e` refused)/history trimming.
+
 ## 2026-10-02
 - kanban: comment <id> <text> and comments <id> (card #514) (sess-20260923-1030-4a526255)
 

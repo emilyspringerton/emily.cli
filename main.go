@@ -59,6 +59,8 @@ func main() {
 		code = cmd.RunObserve(rest)
 	case "apples":
 		code = cmd.RunApples(rest)
+	case "coder":
+		code = cmd.RunCoder(rest)
 	case "blog":
 		code = cmd.RunBlog(rest)
 	case "watch":
@@ -208,6 +210,18 @@ flags:
   -ad-line, -ad-cta, -ad-href   optional ad block
 
 Requires IDUNA_AGENT_SECRET for an agent with the blog.write permission (EMILY-PRIME has it).
+`)
+	case "coder":
+		fmt.Print(`emily coder — the coder agent, powered by emily.cli (chat with it at okemily.com/admin/coder)
+
+  emily coder work [-engine URL] [-dir WORKDIR] [-verify 'go test ./...'] [-once]
+  emily coder lesson add "text" | list | rm <id>     (the feedback loop: lessons go into its prompt)
+  emily coder tools                                  (tools and the coder.tool.<name> permission each needs)
+
+work claims chat turns from IDUNA, runs a tool loop against the vLLM engine and reports every step back.
+Tools: observe, apples, changelog, backlog, status, grep, sed (--sandbox), go, git (no push), files,
+claude_files (reads CLAUDE.md/GEMINI.md), finish. Needs IDUNA_AGENT_SECRET for an agent holding
+coder.worker.claim + coder.worker.report. Engine: kubectl port-forward -n emily svc/coder-engine-service 18000:8000
 `)
 	case "apples":
 		fmt.Print(`emily apples — interact with the IDUNA Apples log
