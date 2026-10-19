@@ -311,6 +311,15 @@ func (a *coderAgent) handle(w coderWork) bool {
 		}
 		tcs, _ := m["tool_calls"].([]any)
 		text, _ := m["content"].(string)
+		if len(tcs) == 0 {
+			known := map[string]bool{}
+			for _, t := range coderToolSpecs {
+				known[t.Name] = true
+			}
+			if tcs = extractToolCalls(text, known); len(tcs) > 0 {
+				m["tool_calls"], m["content"] = tcs, ""
+			}
+		}
 		msgs = append(msgs, map[string]any{"role": "assistant", "content": m["content"], "tool_calls": m["tool_calls"]})
 		if len(tcs) == 0 {
 			a.report(w, "assistant", "", text)

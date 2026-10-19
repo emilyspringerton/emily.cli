@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -135,5 +136,34 @@ func TestTrimMsgsDropsOrphanToolResults(t *testing.T) {
 	got := trimMsgs(m, 3000)
 	if got[0]["role"] != "system" || (len(got) > 1 && got[1]["role"] == "tool") {
 		t.Fatalf("bad trim: %v", got)
+	}
+}
+
+func TestExtractToolCallsFallback(t *testing.T) {
+	known := map[string]bool{"grep": true, "finish": true}
+	// the exact text the live engine produced instead of a <tool_call>
+	live := "<tools>\n{\n  \"name\": \"grep\",\n  \"arguments\": {\n    \"args\": \"-rn \\\"TODO\\\" cmd/\"\n  }\n}\n</tools>"
+	for name, in := range map[string]string{
+		"tools-tag": live,
+		"tool_call": `<tool_call>{"name":"grep","arguments":{"args":"-rn x ."}}</tool_call>`,
+		"fenced":    "ok:\n```json\n{\"name\":\"grep\",\"arguments\":{\"args\":\"-rn x .\"}}\n```",
+		"bare":      `{"name":"grep","arguments":"{\"args\":\"-rn x .\"}"}`,
+	} {
+		got := extractToolCalls(in, known)
+		if len(got) != 1 {
+			t.Errorf("%s: want 1 call, got %d", name, len(got))
+			continue
+		}
+		fn := got[0].(map[string]any)["function"].(map[string]any)
+		var args map[string]any
+		if fn["name"] != "grep" || json.Unmarshal([]byte(fn["arguments"].(string)), &args) != nil || args["args"] == "" {
+			t.Errorf("%s: bad call %v", name, fn)
+		}
+	}
+	if len(extractToolCalls(`<tools>{"name":"rm_rf","arguments":{}}</tools>`, known)) != 0 {
+		t.Error("unknown tool names must not be recovered")
+	}
+	if len(extractToolCalls("just prose with {braces}", known)) != 0 {
+		t.Error("prose is not a call")
 	}
 }
